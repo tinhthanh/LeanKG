@@ -1,4 +1,4 @@
-use axum::{extract::Json, http::StatusCode, response::Html};
+use axum::{http::StatusCode, response::Html};
 use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize, Serialize)]
@@ -157,8 +157,10 @@ pub async fn quality() -> Html<String> {
     "#.to_string())
 }
 
-pub async fn api_query(Json(req): Json<QueryRequest>) -> Result<Json<QueryResponse>, StatusCode> {
-    Ok(Json(QueryResponse {
+pub async fn api_query(
+    axum::extract::Json(_req): axum::extract::Json<QueryRequest>,
+) -> Result<axum::extract::Json<QueryResponse>, (StatusCode, &'static str)> {
+    Ok(axum::extract::Json(QueryResponse {
         result: vec![],
     }))
 }
