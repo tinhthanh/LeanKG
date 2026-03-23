@@ -1,8 +1,18 @@
 # Knowledge Graph Documentation
 
+## LeanKG
+
+Lightweight, local-first knowledge graph for AI-assisted development.
+
 ## Index
 
 | Document | Description |
 |----------|-------------|
-| [planning/PRD.md](./planning/PRD.md) | Product Requirements Document (EN) - Open-source KG for AI agents |
-| [planning/PRD_vi.md](./planning/PRD_vi.md) | PRD (VI) - Graphiti + FalkorDB, temporal KG |
+| [requirement/prd-leankg.md](./requirement/prd-leankg.md) | Product Requirements Document (EN) |
+| [design/hld-leankg.md](./design/hld-leankg.md) | High Level Design Document |
+
+## Quick Links
+
+- **Tech Stack**: Rust + KuzuDB (embedded graph DB) + tree-sitter
+- **Features**: Code indexing, impact radius analysis, auto documentation, MCP server
+- **Target**: AI coding tools (Cursor, OpenCode, Claude Code)

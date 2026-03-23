@@ -1,9 +1,12 @@
 # LeanKG High Level Design
 
-**Phiên bản:** 1.0  
+**Phiên bản:** 1.2  
 **Ngày:** 2026-03-23  
-**Dựa trên:** PRD v1.0  
-**Trạng thái:** Bản nháp
+**Dựa trên:** PRD v1.1  
+**Trạng thái:** Bản nháp  
+**Changelog:** 
+- v1.2 - Tech stack: Rust + KuzuDB (recommended), Go + libSQL (alternative)
+- v1.1 - Added impact radius analysis, TESTED_BY edges, review context, qualified names, auto-install MCP, per-project DB
 
 ---
 
@@ -91,22 +94,30 @@ graph TB
         Graph[Graph Engine<br/>Query Processor]
         DocGen[Doc Generator]
         Watcher[File Watcher<br/>FSWatcher]
+        Impact[Impact Analyzer<br/>Blast Radius]
+        Qual[Code Quality<br/>Metrics]
         
         DB[(libSQL<br/>Database)]
         
         CLI --> Indexer
         CLI --> Graph
         CLI --> DocGen
+        CLI --> Impact
+        CLI --> Qual
         
         MCP --> Graph
         MCP --> DocGen
+        MCP --> Impact
         
         Web --> Graph
         Web --> DocGen
+        Web --> Qual
         
         Indexer --> DB
         Graph --> DB
         DocGen --> DB
+        Impact --> DB
+        Qual --> DB
         Watcher --> Indexer
     end
     
@@ -115,6 +126,9 @@ graph TB
     
     Output[Generated<br/>Documentation]
     DocGen --> Output
+    
+    HTML[HTML Graph<br/>Export]
+    Web -.->|Generates| HTML
 ```
 
 **Containers:**
@@ -128,18 +142,25 @@ graph TB
 | Graph Engine | Query and traverse knowledge graph | Go |
 | Doc Generator | Generate markdown documentation | Go templates |
 | File Watcher | Monitor file changes | fsnotify |
-| libSQL Database | Persistent storage | libSQL (Turso) |
+| Impact Analyzer | Calculate blast radius / impact radius | Go (BFS traversal) |
+| Code Quality | Detect large functions, code metrics | Go |
+| libSQL Database | Persistent storage (per-project) | libSQL (Turso) |
 
 **Interactions:**
 
 1. **CLI → Indexer:** Developer chạy lệnh index
 2. **CLI → Graph:** Developer query knowledge graph
 3. **CLI → DocGen:** Developer generate documentation
-4. **MCP → Graph:** AI tools query code relationships
-5. **MCP → DocGen:** AI tools retrieve context
-6. **Web → Graph:** User browse graph trong browser
-7. **Indexer → DB:** Store parsed code elements
-8. **Watcher → Indexer:** Trigger re-index khi files thay đổi
+4. **CLI → Impact:** Developer calculate blast radius
+5. **CLI → Qual:** Developer check code quality metrics
+6. **MCP → Graph:** AI tools query code relationships
+7. **MCP → DocGen:** AI tools retrieve context
+8. **MCP → Impact:** AI tools calculate impact for changes
+9. **Web → Graph:** User browse graph trong browser
+10. **Web → Qual:** User view code quality metrics
+11. **Indexer → DB:** Store parsed code elements
+12. **Watcher → Indexer:** Trigger re-index khi files thay đổi
+13. **Web → HTML:** Generate self-contained HTML graph export
 
 ### 2.3 Component Diagram (C4-3)
 
@@ -176,6 +197,24 @@ graph TB
         Relate --> Cache
     end
     
+    subgraph "Impact Analyzer"
+        BFS[BFS Traversal]
+        Radius[Radius Calculator]
+        Context[Review Context<br/>Generator]
+        
+        BFS --> Radius
+        Radius --> Context
+    end
+    
+    subgraph "Code Quality"
+        Metrics[Metrics Collector]
+        LargeFunc[Large Function<br/>Detector]
+        Fanout[High Fan-out<br/>Detector]
+        
+        Metrics --> LargeFunc
+        Metrics --> Fanout
+    end
+    
     subgraph "Doc Generator"
         Template[Template Engine]
         Renderer[Markdown Renderer]
@@ -192,16 +231,21 @@ graph TB
         Handler[Request Handler]
         Tools[Tool Registry]
         Auth[Auth Manager]
+        Install[MCP Config<br/>Installer]
         
         Protocol --> Handler
         Handler --> Tools
         Handler --> Auth
+        Handler --> Install
     end
     
     Builder -->|Writes| DB[(libSQL)]
     Query -.->|Reads| DB
     Sync -.->|Reads| DB
     Tools -.->|Queries| Graph
+    BFS -.->|Reads| DB
+    Context -.->|Reads| DB
+    Metrics -.->|Reads| DB
 ```
 
 **Components:**
@@ -212,12 +256,18 @@ graph TB
 | Go Parser | Parse Go source files |
 | TS/JS Parser | Parse TypeScript/JavaScript files |
 | Python Parser | Parse Python files |
-| Entity Extractor | Extract functions, classes, imports |
+| Entity Extractor | Extract functions, classes, imports, TESTED_BY |
 | Graph Builder | Build relationships và store to DB |
 | Query Processor | Process user queries |
 | Search Engine | Search code elements |
 | Relationship Engine | Traverse graph relationships |
 | Query Cache | Cache frequent queries |
+| BFS Traversal | Breadth-first search for blast radius |
+| Radius Calculator | Calculate impact radius in N hops |
+| Review Context Generator | Generate focused subgraph + prompt |
+| Metrics Collector | Collect code quality metrics |
+| Large Function Detector | Find oversized functions |
+| High Fan-out Detector | Find functions with many dependencies |
 | Template Engine | Load documentation templates |
 | Markdown Renderer | Render markdown output |
 | Formatter | Format documentation |
@@ -226,6 +276,7 @@ graph TB
 | Request Handler | Route requests to appropriate tools |
 | Tool Registry | Register available MCP tools |
 | Auth Manager | Authenticate MCP connections |
+| MCP Config Installer | Auto-generate .mcp.json for AI tools |
 
 ### 2.4 Deployment Diagram (C4-4)
 
@@ -243,19 +294,21 @@ graph TB
                 end
                 
                 subgraph "Data Layer"
-                    DB[(libSQL<br/>~/.leankg/data.db)]
+                    DB[(libSQL<br/>.leankg/graph.db)]
                     Cache[Query Cache<br/>In-memory]
                 end
                 
                 subgraph "Processing"
                     Parser[Parser Pool<br/>tree-sitter]
                     Graph[Graph Engine]
+                    Impact[Impact Analyzer]
                 end
             end
             
             subgraph "File System"
                 Code[Project Code<br/>/path/to/project]
-                Config[Config<br/>/.leankg]
+                ProjectDB[.leankg/<br/>graph.db]
+                ProjectConfig[.leankg/<br/>config.yaml]
                 Docs[Generated Docs<br/>/path/to/docs]
             end
         end
@@ -267,13 +320,16 @@ graph TB
     
     Binary --> Parser
     Binary --> Graph
+    Binary --> Impact
     
     Parser --> Code
     Graph --> DB
+    Impact --> DB
     Cache --> DB
     
     Docs -.->|Writes| Binary
-    Config -.->|Reads| Binary
+    ProjectConfig -.->|Reads| Binary
+    ProjectDB -.->|Reads/Writes| Binary
 ```
 
 **Deployment Scenarios:**
@@ -284,6 +340,8 @@ graph TB
 | macOS Apple Silicon | macOS ARM64 | < 100MB RAM, < 200MB disk |
 | Linux x64 | Linux x64 | < 100MB RAM, < 200MB disk |
 | Linux ARM64 | Linux ARM64 | < 100MB RAM, < 200MB disk |
+
+**Database Location:** Per-project at `.leankg/graph.db` (gitignored, portable with project)
 
 **Processes:**
 
@@ -369,6 +427,30 @@ sequenceDiagram
     Doc->>Doc: Write to filesystem
 ```
 
+### 3.4 Impact Analysis Flow
+
+```mermaid
+sequenceDiagram
+    participant AI as AI Tool
+    participant MCP as MCP Server
+    participant BFS as BFS Traversal
+    participant DB as libSQL
+    participant Context as Review Context<br/>Generator
+
+    AI->>MCP: get_impact_radius(file.ts, depth=3)
+    MCP->>BFS: Calculate blast radius
+    BFS->>DB: Find reachable nodes
+    DB-->>BFS: Affected elements
+    BFS-->>MCP: Impact set (files + functions)
+    
+    AI->>MCP: get_review_context(files[])
+    MCP->>Context: Generate review context
+    Context->>DB: Query subgraph
+    DB-->>Context: Focused graph
+    Context-->>MCP: Structured prompt + context
+    MCP-->>AI: Review context payload
+```
+
 ---
 
 ## 4. Data Model
@@ -384,31 +466,31 @@ erDiagram
     FEATURES ||--o{ BUSINESS_LOGIC : implements
 
     CODE_ELEMENTS {
-        uuid id PK
+        string qualified_name PK
         string type
         string name
         string file_path
         int line_start
         int line_end
         string language
-        uuid parent_id FK
+        string parent_qualified FK
         json metadata
         timestamp created_at
         timestamp updated_at
     }
 
     RELATIONSHIPS {
-        uuid id PK
-        uuid source_id FK
-        uuid target_id FK
+        int id PK
+        string source_qualified FK
+        string target_qualified FK
         string type
         json metadata
         timestamp created_at
     }
 
     BUSINESS_LOGIC {
-        uuid id PK
-        uuid element_id FK
+        int id PK
+        string element_qualified FK
         string description
         string user_story_id FK
         string feature_id FK
@@ -417,11 +499,11 @@ erDiagram
     }
 
     DOCUMENTS {
-        uuid id PK
+        int id PK
         string title
         string content
         string file_path
-        uuid generated_from FK
+        string generated_from
         timestamp last_updated
     }
 
@@ -443,8 +525,8 @@ erDiagram
 
 | Table | Mô tả |
 |-------|-------|
-| CODE_ELEMENTS | Lưu trữ tất cả code elements (files, functions, classes, imports, exports) |
-| RELATIONSHIPS | Quan hệ giữa các elements (imports, calls, implements, contains) |
+| CODE_ELEMENTS | Lưu trữ tất cả code elements (files, functions, classes, imports, exports). PK = qualified_name (`file_path::parent::name`) |
+| RELATIONSHIPS | Quan hệ giữa các elements (imports, calls, implements, contains, tested_by) |
 | BUSINESS_LOGIC | Annotations mô tả business logic của từng element |
 | DOCUMENTS | Generated documentation files |
 | USER_STORIES | User stories được map với code |
@@ -458,7 +540,7 @@ erDiagram
 
 | Command | Description |
 |---------|-------------|
-| `leankg init` | Initialize new LeanKG project |
+| `leankg init` | Initialize new LeanKG project in .leankg/ |
 | `leankg index [path]` | Index codebase |
 | `leankg query <query>` | Query knowledge graph |
 | `leankg generate docs` | Generate documentation |
@@ -466,19 +548,27 @@ erDiagram
 | `leankg serve` | Start MCP server và/hoặc web UI |
 | `leankg status` | Show index status |
 | `leankg watch` | Start file watcher |
+| `leankg impact <file> [depth]` | Calculate blast radius for file |
+| `leankg install` | Auto-generate MCP config for AI tools |
+| `leankg export` | Export graph as self-contained HTML |
+| `leankg quality` | Show code quality metrics (large functions) |
 
 ### 5.2 MCP Tools
 
 | Tool | Description |
 |------|-------------|
 | `query_file` | Find file by name or pattern |
-| `get_dependencies` | Get file dependencies |
+| `get_dependencies` | Get file dependencies (direct imports) |
 | `get_dependents` | Get files depending on target |
+| `get_impact_radius` | Get all files affected by change within N hops |
+| `get_review_context` | Generate focused subgraph + structured review prompt |
 | `find_function` | Locate function definition |
-| `get_call_graph` | Get function call chain |
-| `search_code` | Search code elements |
-| `get_context` | Get AI context for file |
+| `get_call_graph` | Get function call chain (full depth) |
+| `search_code` | Search code elements by name/type |
+| `get_context` | Get AI context for file (minimal, token-optimized) |
 | `generate_doc` | Generate documentation for file |
+| `find_large_functions` | Find oversized functions by line count |
+| `get_tested_by` | Get test coverage for a function/file |
 
 ### 5.3 Web UI Routes
 
@@ -489,6 +579,8 @@ erDiagram
 | `/browse` | Code browser |
 | `/docs` | Documentation viewer |
 | `/annotate` | Business logic annotation |
+| `/quality` | Code quality metrics |
+| `/export` | Generate self-contained HTML graph |
 | `/settings` | Configuration |
 
 ---
@@ -606,21 +698,34 @@ documentation:
 
 ## 11. Dependencies
 
-### 11.1 Direct Dependencies
+### 11.1 Direct Dependencies (Rust + KuzuDB)
 
 | Dependency | Version | Purpose |
 |------------|---------|---------|
-| libSQL | latest | Embedded database |
+| kuzu | latest | Embedded graph database |
 | tree-sitter | latest | Code parsing |
-| Cobra | latest | CLI framework |
-| fsnotify | latest | File watching |
+| clap | latest | CLI framework |
+| notify | latest | File watching |
+| axum | latest | Web server |
+| mcp-protocol | latest | MCP server implementation |
 
 ### 11.2 Build Dependencies
 
 | Dependency | Version | Purpose |
 |------------|---------|---------|
-| Go | 1.21+ | Build toolchain |
-| tree-sitter parsers | bundled | Language support |
+| Rust | 1.75+ | Build toolchain |
+| tree-sitter parsers | bundled | Language support (Go, TS, Python, Rust, etc.) |
+
+### 11.3 Alternative Stack (Go + libSQL)
+
+If using Go instead of Rust:
+
+| Dependency | Version | Purpose |
+|------------|---------|---------|
+| libSQL / turso | latest | Embedded SQLite-compatible DB |
+| tree-sitter-go | latest | Code parsing |
+| Cobra | latest | CLI framework |
+| fsnotify | latest | File watching |
 
 ---
 
@@ -635,10 +740,14 @@ documentation:
 | Code element | File, function, class, import trong codebase |
 | Context | Information provided to AI tool |
 | Blast radius | Files affected by a change |
+| Impact radius | Same as blast radius - BFS traversal within N hops |
+| Qualified name | Natural node identifier: `file_path::parent::name` |
+| TESTED_BY | Relationship type: test file tests production code |
 
 ### 12.2 References
 
 - C4 Model: https://c4model.com/
-- libSQL: https://github.com/tursodatabase/libsql
+- KuzuDB: https://github.com/kuzudb/kuzu (Embedded graph database)
 - tree-sitter: https://tree-sitter.github.io/tree-sitter/
 - MCP Protocol: https://modelcontextprotocol.io/
+- code-review-graph: https://github.com/tirth8205/code-review-graph (inspiration for impact analysis)

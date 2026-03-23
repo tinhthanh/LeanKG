@@ -1,10 +1,13 @@
 # LeanKG PRD - Product Requirements Document
 
-**Version:** 1.0  
+**Version:** 1.2  
 **Date:** 2026-03-23  
 **Status:** Draft  
 **Author:** Product Owner  
-**Target Users:** Software developers using AI coding tools (Cursor, OpenCode, Claude Code, etc.)
+**Target Users:** Software developers using AI coding tools (Cursor, OpenCode, Claude Code, etc.)  
+**Changelog:** 
+- v1.2 - Tech stack: Rust + KuzuDB (recommended), Go + libSQL (alternative)
+- v1.1 - Added impact radius analysis, TESTED_BY edges, review context, qualified names, auto-install MCP
 
 ---
 
@@ -84,75 +87,93 @@ LeanKG enables AI coding tools to understand exactly what they need—nothing mo
 
 **FR-03:** Support multiple programming languages (initially: Go, TypeScript/JavaScript, Python, Rust)
 
-**FR-04:** Incremental indexing - only re-index changed files
+**FR-04:** Incremental indexing - only re-index changed files via git-based change detection
 
 **FR-05:** Watch for file changes and auto-update the graph
 
+**FR-06:** Extract TESTED_BY relationships - auto-detect when test files import/call production code
+
+**FR-07:** Track dependent files - when a file changes, also re-index files that depend on it
+
 #### 5.1.2 Auto Documentation Generation
 
-**FR-06:** Generate markdown documentation from code structure
+**FR-08:** Generate markdown documentation from code structure
 
-**FR-07:** Maintain documentation freshness - update on code changes
+**FR-09:** Maintain documentation freshness - update on code changes
 
-**FR-08:** Generate AGENTS.md, CLAUDE.md, and other AI context files
+**FR-10:** Generate AGENTS.md, CLAUDE.md, and other AI context files
 
-**FR-09:** Support custom documentation templates
+**FR-11:** Support custom documentation templates
 
-**FR-10:** Include business logic descriptions in generated docs
+**FR-12:** Include business logic descriptions in generated docs
 
 #### 5.1.3 Business Logic to Code Mapping
 
-**FR-11:** Allow annotating code with business logic descriptions
+**FR-13:** Allow annotating code with business logic descriptions
 
-**FR-12:** Map user stories/features to specific code files and functions
+**FR-14:** Map user stories/features to specific code files and functions
 
-**FR-13:** Generate feature-to-code traceability
+**FR-15:** Generate feature-to-code traceability
 
-**FR-14:** Support business logic queries ("which code handles user authentication?")
+**FR-16:** Support business logic queries ("which code handles user authentication?")
 
 #### 5.1.4 Context Provisioning
 
-**FR-15:** Provide targeted context to AI tools (not full codebase)
+**FR-17:** Provide targeted context to AI tools (not full codebase)
 
-**FR-16:** Calculate and minimize token usage for context queries
+**FR-18:** Calculate and minimize token usage for context queries
 
-**FR-17:** Support context templates (file summary, function summary, etc.)
+**FR-19:** Support context templates (file summary, function summary, etc.)
 
-**FR-18:** Query by relevance, not just file structure
+**FR-20:** Query by relevance, not just file structure
+
+**FR-21:** Generate review context - focused subgraph + structured prompt for code review
+
+**FR-22:** Calculate impact radius (blast radius) - find all files affected by a change within N hops
 
 #### 5.1.5 MCP Server Interface
 
-**FR-19:** Expose knowledge graph via MCP protocol
+**FR-23:** Expose knowledge graph via MCP protocol
 
-**FR-20:** Provide tools for querying code relationships
+**FR-24:** Provide tools for querying code relationships
 
-**FR-21:** Support context retrieval for specific AI operations
+**FR-25:** Support context retrieval for specific AI operations
 
-**FR-22:** Authenticate MCP connections
+**FR-26:** Authenticate MCP connections
+
+**FR-27:** Auto-generate MCP config file for Claude Code/Cursor/OpenCode integration
 
 #### 5.1.6 CLI Interface
 
-**FR-23:** Initialize a new LeanKG project
+**FR-28:** Initialize a new LeanKG project
 
-**FR-24:** Index codebase with configurable options
+**FR-29:** Index codebase with configurable options
 
-**FR-25:** Query the knowledge graph from command line
+**FR-30:** Query the knowledge graph from command line
 
-**FR-26:** Generate documentation
+**FR-31:** Generate documentation
 
-**FR-27:** Manage business logic annotations
+**FR-32:** Manage business logic annotations
 
-**FR-28:** Start/stop MCP server
+**FR-33:** Start/stop MCP server
+
+**FR-34:** Calculate impact radius for a given file
+
+**FR-35:** Auto-install MCP config for AI tools (`leankg install`)
+
+**FR-36:** Find oversized functions by line count (code quality metric)
 
 #### 5.1.7 Lightweight Web UI
 
-**FR-29:** Visualize code dependency graph
+**FR-37:** Visualize code dependency graph
 
-**FR-30:** Browse and search code elements
+**FR-38:** Browse and search code elements
 
-**FR-31:** View and edit business logic annotations
+**FR-39:** View and edit business logic annotations
 
-**FR-32:** Simple documentation viewer
+**FR-40:** Simple documentation viewer
+
+**FR-41:** Export interactive graph as self-contained HTML file
 
 ### 5.2 Non-Functional Requirements
 
@@ -185,50 +206,72 @@ LeanKG enables AI coding tools to understand exactly what they need—nothing mo
 
 ### 6.1 Technology Stack
 
+**Recommended Stack (Best Performance):**
+
 | Component | Technology | Rationale |
 |-----------|------------|-----------|
-| Core Language | Go | Cross-platform, single binary, good performance |
-| Database | libSQL (Turso) | Embedded, SQLite-compatible, no external process |
-| Code Parsing | tree-sitter | Efficient, multi-language support |
-| MCP Server | FastMCP or custom | Standard MCP protocol |
+| Core Language | Rust | Single binary, excellent performance, memory safety |
+| Database | KuzuDB | Embedded graph DB, native traversal, no external process |
+| Code Parsing | tree-sitter | Efficient, multi-language support, mature Rust bindings |
+| MCP Server | Custom Rust | Standard MCP protocol, optimal performance |
+| CLI | Clap | Standard Rust CLI patterns |
+| Web UI | Leptos / Axum | Rust web framework, WASM-compatible |
+| Embeddings | Optional (local Ollama or cloud API) | For semantic search (Phase 2) |
+
+**Alternative Stack (Faster MVP Development):**
+
+| Component | Technology | Rationale |
+|-----------|------------|-----------|
+| Core Language | Go | Cross-platform, single binary, faster to develop |
+| Database | libSQL (Turso) | Embedded, SQLite-compatible, mature Go bindings |
+| Code Parsing | tree-sitter | Same efficient parser |
+| MCP Server | Custom Go | Standard MCP protocol |
 | CLI | Cobra | Standard Go CLI patterns |
 | Web UI | HTMX + Go templates | Lightweight, no complex frontend |
-| Embeddings | Optional (cloud API) | For semantic search (future) |
+
+**Why KuzuDB over SQLite for Graph:**
+- Native graph data model (nodes/edges as first-class citizens)
+- Optimized for traversal queries (BFS, DFS, path finding)
+- 10-100x faster than recursive SQL queries for multi-hop traversal
+- Embedded, no external process required
+- Supports queries like "find all nodes within N hops"
 
 ### 6.2 Data Model
 
+**Node Identity:** Uses qualified_name (`file_path::parent::name`) as natural key instead of UUID. Example: `src/utils.rs::MyStruct::new`.
+
 ```
 CodeElement:
-  - id: UUID
+  - qualified_name: string (PK) - format: file_path::parent::name
   - type: file | function | class | import | export
   - name: string
   - file_path: string
   - line_start: int
   - line_end: int
   - language: string
-  - parent_id: UUID (optional)
+  - parent_qualified: string (optional)
   - metadata: JSON
 
 Relationship:
-  - id: UUID
-  - source_id: UUID
-  - target_id: UUID
-  - type: imports | implements | calls | contains | exports
+  - id: integer (PK, auto-increment)
+  - source_qualified: string (FK)
+  - target_qualified: string (FK)
+  - type: imports | implements | calls | contains | exports | tested_by
   - metadata: JSON
 
 BusinessLogic:
-  - id: UUID
-  - element_id: UUID
+  - id: integer (PK, auto-increment)
+  - element_qualified: string (FK)
   - description: string
   - user_story_id: string (optional)
   - feature_id: string (optional)
 
 Document:
-  - id: UUID
+  - id: integer (PK, auto-increment)
   - title: string
   - content: string
   - file_path: string
-  - generated_from: UUID[]
+  - generated_from: string[] (qualified_names)
   - last_updated: timestamp
 ```
 
@@ -267,11 +310,13 @@ The following features are explicitly out of scope for MVP:
 ### 9.1 MVP Release Criteria
 
 - [ ] Code indexing works for Go, TypeScript, Python
-- [ ] Dependency graph builds correctly
-- [ ] CLI commands functional (init, index, query, generate)
-- [ ] MCP server exposes basic query tools
+- [ ] Dependency graph builds correctly with TESTED_BY edges
+- [ ] CLI commands functional (init, index, query, generate, install, impact)
+- [ ] MCP server exposes query tools including get_impact_radius and get_review_context
 - [ ] Documentation generation produces valid markdown
 - [ ] Business logic annotations can be created and queried
+- [ ] Impact radius analysis works (blast radius within N hops)
+- [ ] Auto-install MCP config works for Claude Code/OpenCode
 - [ ] Web UI shows basic graph visualization
 - [ ] Resource usage within targets
 - [ ] Documentation complete
@@ -322,10 +367,14 @@ The following features are explicitly out of scope for MVP:
 | MCP Server | Model Context Protocol server for AI tool integration |
 | Context Window | AI model's input capacity; LeanKG minimizes tokens needed |
 | Business Logic Mapping | Linking code to business requirements |
+| Qualified Name | Natural node identifier: `file_path::parent::name` format |
+| Blast Radius | All files affected by a change within N hops of graph traversal |
+| Impact Radius | Same as blast radius - used to understand scope of modifications |
 
 ### 11.2 References
 
-- Graphiti: https://github.com/getzep/graphiti
-- Turso/libSQL: https://github.com/tursodatabase/libsql
-- tree-sitter: https://tree-sitter.github.io/tree-sitter/
-- MCP Protocol: https://modelcontextprotocol.io/
+- KuzuDB: https://github.com/kuzudb/kuzu (Embedded graph database)
+- tree-sitter: https://tree-sitter.github.io/tree-sitter/ (Code parsing)
+- MCP Protocol: https://modelcontextprotocol.io/ (AI tool integration)
+- code-review-graph: https://github.com/tirth8205/code-review-graph (Inspiration for impact analysis)
+- Comparison: Graphiti requires Neo4j; FalkorDB needs external process; KuzuDB is embedded with native graph traversal
