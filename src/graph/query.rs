@@ -58,6 +58,39 @@ impl GraphEngine {
         }))
     }
 
+    pub fn find_element_by_name(
+        &self,
+        name: &str,
+    ) -> Result<Option<CodeElement>, Box<dyn std::error::Error>> {
+        let query = format!(
+            r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, metadata] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, metadata], name = "{}""#,
+            name
+        );
+
+        let result = self.db.run_script(&query, std::collections::BTreeMap::new())?;
+        let rows = result.rows;
+
+        if rows.is_empty() {
+            return Ok(None);
+        }
+
+        let row = &rows[0];
+        let parent_qualified = row[7].as_str().map(String::from);
+        let metadata_str = row[8].as_str().unwrap_or("{}");
+        
+        Ok(Some(CodeElement {
+            qualified_name: row[0].as_str().unwrap_or("").to_string(),
+            element_type: row[1].as_str().unwrap_or("").to_string(),
+            name: row[2].as_str().unwrap_or("").to_string(),
+            file_path: row[3].as_str().unwrap_or("").to_string(),
+            line_start: row[4].as_i64().unwrap_or(0) as u32,
+            line_end: row[5].as_i64().unwrap_or(0) as u32,
+            language: row[6].as_str().unwrap_or("").to_string(),
+            parent_qualified,
+            metadata: serde_json::from_str(metadata_str).unwrap_or(serde_json::json!({})),
+        }))
+    }
+
     pub fn get_dependencies(
         &self,
         file_path: &str,
@@ -108,10 +141,17 @@ impl GraphEngine {
         &self,
         source: &str,
     ) -> Result<Vec<Relationship>, Box<dyn std::error::Error>> {
-        let query = format!(
-            r#"?[source_qualified, target_qualified, rel_type, metadata] := *relationships[source_qualified, target_qualified, rel_type, metadata], source_qualified = "{}""#,
-            source
-        );
+        let query = if source.contains("::") {
+            format!(
+                r#"?[source_qualified, target_qualified, rel_type, metadata] := *relationships[source_qualified, target_qualified, rel_type, metadata], source_qualified = "{}""#,
+                source
+            )
+        } else {
+            format!(
+                r#"?[source_qualified, target_qualified, rel_type, metadata] := *relationships[source_qualified, target_qualified, rel_type, metadata], source_qualified = "{}""#,
+                source
+            )
+        };
 
         let result = self.db.run_script(&query, std::collections::BTreeMap::new())?;
         let rows = result.rows;

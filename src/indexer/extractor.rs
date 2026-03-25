@@ -121,7 +121,7 @@ impl<'a> EntityExtractor<'a> {
             | "method_definition" => {
                 self.extract_function(node, parent, elements);
             }
-            "class_declaration" | "type_declaration" | "class_def" => {
+            "class_declaration" | "type_declaration" | "class_def" | "struct_item" => {
                 self.extract_class(node, parent, elements);
             }
             "type_spec" => {
@@ -133,7 +133,8 @@ impl<'a> EntityExtractor<'a> {
             "import_declaration"
             | "import_specifier"
             | "import_statement"
-            | "import_from_statement" => {
+            | "import_from_statement"
+            | "use_declaration" => {
                 if let Some(source) = self.get_import_source(node, node_type) {
                     relationships.push(Relationship {
                         id: None,
@@ -143,6 +144,9 @@ impl<'a> EntityExtractor<'a> {
                         metadata: serde_json::json!({}),
                     });
                 }
+            }
+            "call_expression" => {
+                self.extract_call(node, parent, elements, relationships);
             }
             "decorator" => {
                 self.extract_decorator(node, parent, elements);
@@ -164,6 +168,7 @@ impl<'a> EntityExtractor<'a> {
                         | "type_declaration"
                         | "class_def"
                         | "type_spec"
+                        | "struct_item"
                 ) {
                     self.get_node_name(node)
                 } else {
@@ -332,6 +337,38 @@ impl<'a> EntityExtractor<'a> {
         }
     }
 
+    fn extract_call(
+        &self,
+        node: Node,
+        parent: Option<&str>,
+        _elements: &mut Vec<CodeElement>,
+        relationships: &mut Vec<Relationship>,
+    ) {
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            if child.kind() == "identifier" {
+                if let Some(bytes) = self.source.get(child.byte_range()) {
+                    if let Ok(name) = std::str::from_utf8(bytes) {
+                        let parent_name = parent.unwrap_or("");
+                        let source = if parent_name.is_empty() {
+                            self.file_path.to_string()
+                        } else {
+                            format!("{}::{}", self.file_path, parent_name)
+                        };
+                        relationships.push(Relationship {
+                            id: None,
+                            source_qualified: source,
+                            target_qualified: name.to_string(),
+                            rel_type: "calls".to_string(),
+                            metadata: serde_json::json!({}),
+                        });
+                    }
+                }
+                break;
+            }
+        }
+    }
+
     fn get_node_name(&self, node: Node) -> Option<String> {
         let node_type = node.kind();
 
@@ -379,6 +416,20 @@ impl<'a> EntityExtractor<'a> {
             let mut cursor = node.walk();
             for child in node.children(&mut cursor) {
                 if child.kind() == "dotted_name" || child.kind() == "identifier" {
+                    return std::str::from_utf8(self.source.get(child.byte_range())?)
+                        .ok()
+                        .map(String::from);
+                }
+            }
+        }
+
+        if node_type == "use_declaration" {
+            let mut cursor = node.walk();
+            for child in node.children(&mut cursor) {
+                if child.kind() == "identifier"
+                    || child.kind() == "scoped_identifier"
+                    || child.kind() == "dotted_identifier"
+                {
                     return std::str::from_utf8(self.source.get(child.byte_range())?)
                         .ok()
                         .map(String::from);

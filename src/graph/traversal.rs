@@ -35,7 +35,12 @@ impl<'a> ImpactAnalyzer<'a> {
                     visited.insert(rel.target_qualified.clone());
                     queue.push_back((rel.target_qualified.clone(), current_depth + 1));
 
-                    if let Some(element) = self.graph.find_element(&rel.target_qualified)? {
+                    if let Ok(Some(element)) = self.graph.find_element(&rel.target_qualified) {
+                        affected_elements.push(element);
+                    } else if let Some(element) =
+                        self.graph.find_element_by_name(&rel.target_qualified)?
+                    {
+                        visited.insert(element.qualified_name.clone());
                         affected_elements.push(element);
                     }
                 }
@@ -47,7 +52,12 @@ impl<'a> ImpactAnalyzer<'a> {
                     visited.insert(rel.source_qualified.clone());
                     queue.push_back((rel.source_qualified.clone(), current_depth + 1));
 
-                    if let Some(element) = self.graph.find_element(&rel.source_qualified)? {
+                    if let Ok(Some(element)) = self.graph.find_element(&rel.source_qualified) {
+                        affected_elements.push(element);
+                    } else if let Some(element) =
+                        self.graph.find_element_by_name(&rel.source_qualified)?
+                    {
+                        visited.insert(element.qualified_name.clone());
                         affected_elements.push(element);
                     }
                 }

@@ -16,10 +16,28 @@ use tokio_tungstenite::{
     tungstenite::{Error, Message},
 };
 
-#[derive(Debug, Clone)]
 pub struct MCPServer {
     auth_config: Arc<RwLock<AuthConfig>>,
     db_path: std::path::PathBuf,
+    graph_engine: Option<GraphEngine>,
+}
+
+impl std::fmt::Debug for MCPServer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MCPServer")
+            .field("db_path", &self.db_path)
+            .finish()
+    }
+}
+
+impl Clone for MCPServer {
+    fn clone(&self) -> Self {
+        Self {
+            auth_config: self.auth_config.clone(),
+            db_path: self.db_path.clone(),
+            graph_engine: self.graph_engine.clone(),
+        }
+    }
 }
 
 impl MCPServer {
@@ -27,7 +45,18 @@ impl MCPServer {
         Self {
             auth_config: Arc::new(RwLock::new(AuthConfig::default())),
             db_path,
+            graph_engine: None,
         }
+    }
+
+    fn get_graph_engine(&self) -> Result<GraphEngine, String> {
+        if let Some(ref ge) = self.graph_engine {
+            return Ok(ge.clone());
+        }
+        let db = init_db(&self.db_path)
+            .map_err(|e| format!("Database error: {}", e))?;
+        let ge = GraphEngine::new(db);
+        Ok(ge)
     }
 
     pub fn db_path(&self) -> &std::path::PathBuf {
@@ -208,9 +237,7 @@ impl MCPServer {
         tool_name: &str,
         arguments: &serde_json::Value,
     ) -> Result<serde_json::Value, String> {
-        let db = init_db(&self.db_path)
-            .map_err(|e| format!("Database error: {}", e))?;
-        let graph_engine = GraphEngine::new(db);
+        let graph_engine = self.get_graph_engine()?;
         let handler = ToolHandler::new(graph_engine);
         handler.execute_tool(tool_name, arguments).await
     }
