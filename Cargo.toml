@@ -22,7 +22,6 @@ tracing = "0.1"
 tracing-subscriber = "0.3"
 walkdir = "2"
 glob = "0.3"
-tokio-tungstenite = "0.25"
 futures-util = "0.3"
 axum-core = "0.4"
 headers = "0.4"
@@ -30,6 +29,9 @@ sha2 = "0.10"
 pulldown-cmark = "0.12"
 regex = "1"
 parking_lot = "0.12"
+schemars = "0.8"
+rmcp = { version = "0.16", features = ["server", "transport-io"] }
+async-trait = "0.1"
 
 [dev-dependencies]
 tempfile = "3"
