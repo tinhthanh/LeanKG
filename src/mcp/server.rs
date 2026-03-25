@@ -6,8 +6,7 @@ use crate::mcp::tools::ToolRegistry;
 use crate::mcp::watcher::start_watcher;
 use rmcp::handler::server::ServerHandler;
 use rmcp::model::{
-    CallToolRequestParams, CallToolResult, Content, Implementation, ListToolsResult,
-    ProtocolVersion, ServerCapabilities, ServerInfo, Tool,
+    CallToolRequestParams, CallToolResult, Content, ListToolsResult, Tool,
 };
 use rmcp::service::{serve_server, RoleServer};
 use rmcp::transport::stdio;
@@ -113,21 +112,18 @@ impl MCPServer {
 }
 
 impl ServerHandler for MCPServer {
-    fn get_info(&self) -> ServerInfo {
-        ServerInfo {
-            protocol_version: ProtocolVersion::LATEST,
-            capabilities: ServerCapabilities::builder()
+    fn get_info(&self) -> rmcp::model::ServerInfo {
+        rmcp::model::ServerInfo::new(
+            rmcp::model::ServerCapabilities::builder()
                 .enable_tools()
                 .build(),
-            server_info: Implementation {
-                name: "leankg".to_string(),
-                version: "0.1.0".to_string(),
-                title: Some("LeanKG".to_string()),
-                description: Some("Lightweight knowledge graph for codebase understanding".to_string()),
-                ..Default::default()
-            },
-            instructions: Some("LeanKG - Lightweight knowledge graph for codebase understanding. Use tools to query code elements, dependencies, impact radius, and traceability.".to_string()),
-        }
+        )
+        .with_server_info(
+            rmcp::model::Implementation::new("leankg", env!("CARGO_PKG_VERSION"))
+                .with_title("LeanKG")
+                .with_description("Lightweight knowledge graph for codebase understanding")
+        )
+        .with_instructions("LeanKG - Lightweight knowledge graph for codebase understanding. Use tools to query code elements, dependencies, impact radius, and traceability.")
     }
 
     async fn list_tools(
