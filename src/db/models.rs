@@ -34,6 +34,35 @@ pub struct BusinessLogic {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BusinessLogicWithDoc {
+    pub business_logic: BusinessLogic,
+    pub doc_links: Vec<DocLink>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DocLink {
+    pub doc_qualified: String,
+    pub doc_title: String,
+    pub context: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TraceabilityEntry {
+    pub element_qualified: String,
+    pub description: String,
+    pub user_story_id: Option<String>,
+    pub feature_id: Option<String>,
+    pub doc_links: Vec<DocLink>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TraceabilityReport {
+    pub element_qualified: String,
+    pub entries: Vec<TraceabilityEntry>,
+    pub count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Document {
     #[serde(skip)]
     pub id: Option<String>,

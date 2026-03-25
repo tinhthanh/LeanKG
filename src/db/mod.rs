@@ -368,3 +368,102 @@ pub fn find_by_business_domain(
 ) -> Result<Vec<models::BusinessLogic>, Box<dyn std::error::Error>> {
     search_business_logic(db, domain)
 }
+
+pub fn get_documented_by(
+    db: &CozoDb,
+    element_qualified: &str,
+) -> Result<Vec<models::DocLink>, Box<dyn std::error::Error>> {
+    let query = format!(
+        r#"?[target_qualified, rel_type, metadata] := *relationships[source_qualified, target_qualified, rel_type, metadata], source_qualified = "{}", rel_type = "documented_by""#,
+        element_qualified
+    );
+
+    let result = db.run_script(&query, std::collections::BTreeMap::new())?;
+    let rows = result.rows;
+
+    let doc_links: Vec<models::DocLink> = rows
+        .iter()
+        .filter_map(|row| {
+            let doc_qualified = row[0].as_str().unwrap_or("").to_string();
+            let _rel_type = row[1].as_str().unwrap_or("");
+            let metadata_str = row.get(2).and_then(|v| v.as_str()).unwrap_or("{}");
+            let metadata: serde_json::Value = serde_json::from_str(metadata_str).ok()?;
+
+            let doc_title = metadata
+                .get("title")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Untitled")
+                .to_string();
+            let context = metadata
+                .get("context")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+
+            Some(models::DocLink {
+                doc_qualified,
+                doc_title,
+                context,
+            })
+        })
+        .collect();
+
+    Ok(doc_links)
+}
+
+pub fn get_traceability_report(
+    db: &CozoDb,
+    element_qualified: &str,
+) -> Result<models::TraceabilityReport, Box<dyn std::error::Error>> {
+    let bl = get_business_logic(db, element_qualified)?;
+    let doc_links = get_documented_by(db, element_qualified)?;
+
+    let entry = models::TraceabilityEntry {
+        element_qualified: element_qualified.to_string(),
+        description: bl
+            .as_ref()
+            .map(|b| b.description.clone())
+            .unwrap_or_default(),
+        user_story_id: bl.as_ref().and_then(|b| b.user_story_id.clone()),
+        feature_id: bl.as_ref().and_then(|b| b.feature_id.clone()),
+        doc_links,
+    };
+
+    Ok(models::TraceabilityReport {
+        element_qualified: element_qualified.to_string(),
+        entries: vec![entry],
+        count: 1,
+    })
+}
+
+pub fn get_code_for_requirement(
+    db: &CozoDb,
+    requirement_id: &str,
+) -> Result<Vec<models::TraceabilityEntry>, Box<dyn std::error::Error>> {
+    let query = format!(
+        r#"?[element_qualified, description, user_story_id, feature_id] := *business_logic[element_qualified, description, user_story_id, feature_id], user_story_id = "{}""#,
+        requirement_id
+    );
+
+    let result = db.run_script(&query, std::collections::BTreeMap::new())?;
+    let rows = result.rows;
+
+    let mut entries = Vec::new();
+    for row in rows {
+        let element_qualified = row[0].as_str().unwrap_or("").to_string();
+        let description = row[1].as_str().unwrap_or("").to_string();
+        let user_story_id = row[2].as_str().map(String::from);
+        let feature_id = row[3].as_str().map(String::from);
+
+        let doc_links = get_documented_by(db, &element_qualified)?;
+
+        entries.push(models::TraceabilityEntry {
+            element_qualified,
+            description,
+            user_story_id,
+            feature_id,
+            doc_links,
+        });
+    }
+
+    Ok(entries)
+}
