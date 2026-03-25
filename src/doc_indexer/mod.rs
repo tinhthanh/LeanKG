@@ -126,10 +126,7 @@ impl DocIndexer {
             line_end: content.lines().count() as u32,
             language: "markdown".to_string(),
             parent_qualified: None,
-            metadata: serde_json::json!({
-                "category": category,
-                "headings": self.extract_headings(&content),
-            }),
+            metadata: serde_json::json!({}),
         };
 
         let (sections, heading_rels) = self.extract_sections(&content, &qualified_name, path);
@@ -144,9 +141,7 @@ impl DocIndexer {
                 source_qualified: qualified_name.clone(),
                 target_qualified: target,
                 rel_type: "references".to_string(),
-                metadata: serde_json::json!({
-                    "context": context,
-                }),
+                metadata: serde_json::json!({}),
             });
 
             relationships.push(Relationship {
@@ -154,9 +149,7 @@ impl DocIndexer {
                 source_qualified: target_clone,
                 target_qualified: qualified_name.clone(),
                 rel_type: "documented_by".to_string(),
-                metadata: serde_json::json!({
-                    "context": context,
-                }),
+                metadata: serde_json::json!({}),
             });
         }
 

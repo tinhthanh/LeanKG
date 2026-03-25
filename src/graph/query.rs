@@ -485,7 +485,8 @@ impl GraphEngine {
         }
 
         for element in elements {
-            let metadata_str = serde_json::to_string(&element.metadata)?;
+            let metadata_str = serde_json::to_string(&element.metadata)?
+                .replace('"', "\\\"");
             let parent_qualified_val = element.parent_qualified.as_ref()
                 .map(|s| format!("\"{}\"", s))
                 .unwrap_or_else(|| "null".to_string());
@@ -524,7 +525,8 @@ impl GraphEngine {
         &self,
         element: &CodeElement,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let metadata_str = serde_json::to_string(&element.metadata)?;
+        let metadata_str = serde_json::to_string(&element.metadata)?
+            .replace('"', "\\\"");
         let parent_qualified_val = element.parent_qualified.as_ref()
             .map(|s| format!("\"{}\"", s))
             .unwrap_or_else(|| "null".to_string());
@@ -560,7 +562,8 @@ impl GraphEngine {
         &self,
         relationship: &Relationship,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let metadata_str = serde_json::to_string(&relationship.metadata)?;
+        let metadata_str = serde_json::to_string(&relationship.metadata)?
+            .replace('"', "\\\"");
 
         let query = format!(
             r#"?[source_qualified, target_qualified, rel_type, metadata] <- [[ "{0}", "{1}", "{2}", "{3}" ]] :put relationships {{ source_qualified, target_qualified, rel_type, metadata }}"#,
@@ -584,7 +587,8 @@ impl GraphEngine {
         }
 
         for rel in relationships {
-            let metadata_str = serde_json::to_string(&rel.metadata)?;
+            let metadata_str = serde_json::to_string(&rel.metadata)?
+                .replace('"', "\\\"");
             
             let query = format!(
                 r#"?[source_qualified, target_qualified, rel_type, metadata] <- [[ "{0}", "{1}", "{2}", "{3}" ]] :put relationships {{ source_qualified, target_qualified, rel_type, metadata }}"#,

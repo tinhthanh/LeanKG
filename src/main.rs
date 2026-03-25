@@ -2,6 +2,7 @@ mod cli;
 mod config;
 mod db;
 mod doc;
+mod doc_indexer;
 mod graph;
 mod indexer;
 mod mcp;
@@ -317,6 +318,30 @@ async fn index_codebase(
     if skipped > 0 {
         println!("Skipped {} files (errors)", skipped);
     }
+
+    let docs_path = std::path::Path::new("docs");
+    if docs_path.exists() {
+        println!("Indexing documentation at docs/...");
+        match doc_indexer::index_docs_directory(docs_path, &graph_engine) {
+            Ok(result) => {
+                println!(
+                    "Indexed {} documents and {} sections",
+                    result.documents.len(),
+                    result.sections.len()
+                );
+                if verbose && !result.relationships.is_empty() {
+                    println!(
+                        "  Created {} documentation relationships",
+                        result.relationships.len()
+                    );
+                }
+            }
+            Err(e) => {
+                eprintln!("Warning: Failed to index docs: {}", e);
+            }
+        }
+    }
+
     Ok(())
 }
 
