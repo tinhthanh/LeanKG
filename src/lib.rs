@@ -5,6 +5,7 @@ pub mod cli;
 pub mod config;
 pub mod db;
 pub mod doc;
+pub mod doc_indexer;
 pub mod graph;
 pub mod indexer;
 pub mod mcp;

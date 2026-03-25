@@ -25,6 +25,10 @@ impl GraphEngine {
         }
     }
 
+    pub fn db(&self) -> &CozoDb {
+        &self.db
+    }
+
     pub fn find_element(
         &self,
         qualified_name: &str,
@@ -413,6 +417,61 @@ impl GraphEngine {
                 });
             });
         }
+
+        Ok(())
+    }
+
+    pub fn insert_element(
+        &self,
+        element: &CodeElement,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let metadata_str = serde_json::to_string(&element.metadata)?;
+        let parent_qualified_val = element.parent_qualified.as_ref()
+            .map(|s| format!("\"{}\"", s))
+            .unwrap_or_else(|| "null".to_string());
+
+        let query = format!(
+            r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, metadata] <- [[ "{0}", "{1}", "{2}", "{3}", {4}, {5}, "{6}", {7}, "{8}" ]] :put code_elements {{ qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, metadata }}"#,
+            element.qualified_name,
+            element.element_type,
+            element.name,
+            element.file_path,
+            element.line_start,
+            element.line_end,
+            element.language,
+            parent_qualified_val,
+            metadata_str,
+        );
+
+        self.db.run_script(&query, std::collections::BTreeMap::new())?;
+
+        let cache = self.cache.clone();
+        let file_path = element.file_path.clone();
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(async {
+                cache.read().await.invalidate_file(&file_path).await;
+            });
+        });
+
+        Ok(())
+    }
+
+    pub fn insert_relationship(
+        &self,
+        relationship: &Relationship,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let metadata_str = serde_json::to_string(&relationship.metadata)?;
+
+        let query = format!(
+            r#"?[source_qualified, target_qualified, rel_type, metadata] <- [[ "{0}", "{1}", "{2}", "{3}" ]] :put relationships {{ source_qualified, target_qualified, rel_type, metadata }}"#,
+            relationship.source_qualified,
+            relationship.target_qualified,
+            relationship.rel_type,
+            metadata_str,
+        );
+
+        self.db.run_script(&query, std::collections::BTreeMap::new())?;
 
         Ok(())
     }
