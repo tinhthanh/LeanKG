@@ -116,6 +116,16 @@ impl MCPServer {
 
         tracing::info!("LeanKG not found, searching for project root...");
 
+        let test_file = project_root.join(".leankg_write_test");
+        if std::fs::write(&test_file, "test").is_err() {
+            std::fs::remove_file(test_file).ok();
+            return Err(format!(
+                "Filesystem at {} is not writable: Read-only file system",
+                project_root.display()
+            ));
+        }
+        std::fs::remove_file(test_file).ok();
+
         std::fs::create_dir_all(project_root.join(".leankg")).map_err(|e| format!("Failed to create .leankg: {}", e))?;
         let config = crate::config::ProjectConfig::default();
         let config_yaml = serde_yaml::to_string(&config).map_err(|e| format!("Failed to serialize config: {}", e))?;
