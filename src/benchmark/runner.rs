@@ -21,6 +21,7 @@ impl BenchmarkRunner {
 
     pub fn run_with_leankg(&self, prompt: &str) -> BenchmarkResult {
         let mut cmd = Command::new(&self.opencode_path);
+        cmd.arg("run");
         cmd.arg(prompt);
 
         let output = cmd.output().expect("Failed to execute opencode");
@@ -33,8 +34,8 @@ impl BenchmarkRunner {
 
     pub fn run_without_leankg(&self, prompt: &str) -> BenchmarkResult {
         let mut cmd = Command::new(&self.opencode_path);
+        cmd.arg("run");
         cmd.arg(prompt);
-        cmd.env("LEANKG_DISABLED", "1");
 
         let output = cmd.output().expect("Failed to execute opencode");
 
