@@ -3,10 +3,15 @@ use std::error::Error;
 use std::path::PathBuf;
 use std::process::Command;
 
-const KILO_MCP_WITH_LEANKG: &str = "/Users/linh.doan/.config/kilo/mcp_settings_with_leankg.json";
-const KILO_MCP_WITHOUT_LEANKG: &str =
-    "/Users/linh.doan/.config/kilo/mcp_settings_without_leankg.json";
-const KILO_MCP_SETTINGS: &str = "/Users/linh.doan/.config/kilo/mcp_settings.json";
+fn kilo_config_path() -> PathBuf {
+    dirs::config_dir()
+        .unwrap_or_else(|| PathBuf::from(".config"))
+        .join("kilo")
+}
+
+const KILO_MCP_WITH_LEANKG: &str = "mcp_settings_with_leankg.json";
+const KILO_MCP_WITHOUT_LEANKG: &str = "mcp_settings_without_leankg.json";
+const KILO_MCP_SETTINGS: &str = "kilo.json";
 
 pub struct BenchmarkRunner {
     output_dir: PathBuf,
@@ -50,12 +55,14 @@ impl BenchmarkRunner {
     }
 
     fn switch_mcp_config(&self, with_leankg: bool) {
+        let config_dir = kilo_config_path();
         let src = if with_leankg {
-            KILO_MCP_WITH_LEANKG
+            config_dir.join(KILO_MCP_WITH_LEANKG)
         } else {
-            KILO_MCP_WITHOUT_LEANKG
+            config_dir.join(KILO_MCP_WITHOUT_LEANKG)
         };
-        let _ = Command::new("cp").arg(src).arg(KILO_MCP_SETTINGS).output();
+        let dst = config_dir.join(KILO_MCP_SETTINGS);
+        let _ = Command::new("cp").arg(src).arg(dst).output();
     }
 
     fn run_kilo(&self, prompt: &str) -> BenchmarkResult {

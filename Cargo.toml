@@ -30,6 +30,7 @@ pulldown-cmark = "0.12"
 regex = "1"
 schemars = "0.8"
 async-trait = "0.1"
+dirs = "5"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 cozo = "0.2"
