@@ -3,7 +3,19 @@ description: "Build new features"
 
 tasks:
   - id: "impl-new-tool"
-    prompt: "Add a new MCP tool called mcp_hello that returns 'Hello, World!'"
+    prompt: "Add a new MCP tool called mcp_hello that returns 'Hello, World!' in src/mcp/tools.rs"
     expected:
       - "src/mcp/tools.rs"
-      - "src/mcp/handler.rs"
+      - "mcp_hello"
+
+  - id: "impl-search-enhance"
+    prompt: "Add a 'limit' parameter to the search_code tool to limit results"
+    expected:
+      - "src/mcp/tools.rs"
+      - "src/graph/query.rs"
+
+  - id: "impl-new-relationship"
+    prompt: "Add a new relationship type 'implementations' between CodeElement structs"
+    expected:
+      - "src/db/models.rs"
+      - "src/graph/"

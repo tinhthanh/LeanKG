@@ -2,7 +2,19 @@ name: "Impact Analysis Tasks"
 description: "Find what breaks if X changes"
 
 tasks:
-  - id: "impact-handler"
-    prompt: "What breaks if I modify src/mcp/handler.rs?"
+  - id: "impact-handler-change"
+    prompt: "What would break if I modify src/mcp/handler.rs? Show the impact radius."
     expected:
       - "src/mcp/server.rs"
+      - "ToolHandler"
+
+  - id: "impact-models-change"
+    prompt: "If I change the CodeElement struct, what other code would need updating?"
+    expected:
+      - "src/graph/"
+      - "src/indexer/"
+
+  - id: "impact-db-change"
+    prompt: "What happens to dependents if I modify src/db/models.rs?"
+    expected:
+      - "db/models.rs"
