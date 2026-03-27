@@ -505,12 +505,12 @@ impl ToolHandler {
 
         let elements = self
             .graph_engine
-            .all_elements()
+            .search_by_name_typed(name, Some("function"), 50)
             .map_err(|e| e.to_string())?;
 
         let matches: Vec<_> = elements
             .iter()
-            .filter(|e| e.element_type == "function" && e.name.contains(name))
+            .filter(|e| e.name.contains(name))
             .map(|e| {
                 json!({
                     "qualified_name": e.qualified_name,
@@ -556,24 +556,11 @@ impl ToolHandler {
 
         let elements = self
             .graph_engine
-            .all_elements()
+            .search_by_name_typed(query, element_type, limit)
             .map_err(|e| e.to_string())?;
 
-        let query_lower = query.to_lowercase();
-        let type_filter = element_type.map(|t| t.to_lowercase());
         let matches: Vec<_> = elements
             .iter()
-            .filter(|e| {
-                let name_match = e.name.to_lowercase().contains(&query_lower)
-                    || e.qualified_name.to_lowercase().contains(&query_lower)
-                    || e.element_type.to_lowercase().contains(&query_lower);
-                let type_match = type_filter
-                    .as_ref()
-                    .map(|t| e.element_type.to_lowercase() == *t)
-                    .unwrap_or(true);
-                name_match && type_match
-            })
-            .take(limit)
             .map(|e| {
                 json!({
                     "qualified_name": e.qualified_name,
