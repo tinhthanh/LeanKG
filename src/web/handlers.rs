@@ -226,21 +226,33 @@ pub async fn graph() -> axum::response::Html<String> {
         </div>
         <div class="card">
             <h3>Graph Controls</h3>
-            <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+            <div style="display: flex; gap: 10px; flex-wrap: wrap; align-items: center;">
                 <button onclick="zoomIn()">Zoom In</button>
                 <button onclick="zoomOut()">Zoom Out</button>
                 <button onclick="resetZoom()">Reset</button>
-                <button onclick="startLayout()">Run Layout</button>
+                <select id="layout-select" onchange="applyLayout(this.value)" style="padding: 8px; border-radius: 6px; border: 1px solid #ddd; font-size: 14px; cursor: pointer;">
+                    <option value="force">Force Atlas 2</option>
+                    <option value="circular">Circular</option>
+                    <option value="grid">Grid</option>
+                    <option value="hierarchical">Hierarchical</option>
+                    <option value="random">Random</option>
+                </select>
+                <button onclick="applyLayout(document.getElementById('layout-select').value)">Apply Layout</button>
             </div>
         </div>
         <style>
             .filter-btn { background: #e0e0e0; color: #333; padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer; font-weight: 500; transition: all 0.2s; }
             .filter-btn:hover { background: #d0d0d0; }
             .filter-btn.active { background: #0066cc; color: #fff; }
+            #graph-container { width: 100%; height: 600px; }
             #graph-container canvas { width: 100% !important; height: 100% !important; }
         </style>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/graphology/0.25.4/graphology.umd.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/sigma.js/2.4.0/sigma.min.js"></script>
         <script>
+            const Graph = graphology.Graph;
             let sig = null;
+            window.sig = null;
             let graphDataCache = null;
             let currentFilter = 'all';
             const docTypes = ['document', 'doc_section'];
@@ -411,64 +423,462 @@ pub async fn graph() -> axum::response::Html<String> {
                     validNodeIds.has(e.source) && validNodeIds.has(e.target)
                 );
                 
-                const graphData = {
-                    nodes: data.nodes.map((n, idx) => {
-                        const cachedPos = nodePositionCache[n.id];
-                        return {
-                            id: nodeIdxToUniqueId[idx],
-                            label: n.label,
-                            x: cachedPos ? cachedPos.x : (Math.random() * 100),
-                            y: cachedPos ? cachedPos.y : (Math.random() * 100),
-                            size: 5,
-                            color: colors[n.element_type] || '#666',
-                            type: n.element_type
-                        };
-                    }),
-                    edges: finalEdges
+                const nodeCount = data.nodes.length;
+                const maxDim = Math.max(100, Math.sqrt(nodeCount) * 8);
+                
+                const nodeIndexMap = {};
+                data.nodes.forEach((n, idx) => { nodeIndexMap[n.id] = idx; });
+                
+                const parentMap = {};
+                const childMap = {};
+                finalEdges.forEach(e => {
+                    if (!childMap[e.source]) childMap[e.source] = [];
+                    childMap[e.source].push(e.target);
+                    parentMap[e.target] = e.source;
+                });
+                
+                const rootNodes = data.nodes.filter(n => !parentMap[n.id]);
+                const positioned = {};
+                const inProgress = {};
+                
+                const getOrPosition = (nodeId, depth) => {
+                    if (positioned[nodeId]) return positioned[nodeId];
+                    if (inProgress[nodeId]) return { x: (Math.random() - 0.5) * maxDim, y: (Math.random() - 0.5) * maxDim };
+                    
+                    const idx = nodeIndexMap[nodeId];
+                    if (idx === undefined) return { x: 0, y: 0 };
+                    
+                    const cachedPos = nodePositionCache[nodeId];
+                    if (cachedPos) {
+                        positioned[nodeId] = cachedPos;
+                        return cachedPos;
+                    }
+                    
+                    inProgress[nodeId] = true;
+                    
+                    const children = childMap[nodeId] || [];
+                    let cx = 0, cy = 0, childCount = 0;
+                    if (children.length > 0) {
+                        children.forEach(c => {
+                            if (!inProgress[c]) {
+                                const childPos = getOrPosition(c, depth + 1);
+                                cx += childPos.x;
+                                cy += childPos.y;
+                                childCount++;
+                            }
+                        });
+                    }
+                    
+                    const parentId = parentMap[nodeId];
+                    let px = 0, py = 0;
+                    if (parentId && positioned[parentId]) {
+                        px = positioned[parentId].x;
+                        py = positioned[parentId].y;
+                    } else if (rootNodes.indexOf(data.nodes[idx]) >= 0) {
+                        const rootIdx = rootNodes.indexOf(data.nodes[idx]);
+                        const angle = (2 * Math.PI * rootIdx) / Math.max(rootNodes.length, 1);
+                        px = Math.cos(angle) * maxDim * 0.7;
+                        py = Math.sin(angle) * maxDim * 0.7;
+                    } else if (childCount > 0) {
+                        px = cx / childCount;
+                        py = cy / childCount;
+                    } else {
+                        px = (Math.random() - 0.5) * maxDim;
+                        py = (Math.random() - 0.5) * maxDim;
+                    }
+                    
+                    const jitter = Math.max(10, maxDim * 0.1);
+                    let x = px + (Math.random() - 0.5) * jitter;
+                    let y = py + (Math.random() - 0.5) * jitter;
+                    
+                    if (childCount > 0 && px !== 0) {
+                        x = px * 0.4 + (cx / childCount) * 0.6;
+                        y = py * 0.4 + (cy / childCount) * 0.6;
+                    }
+                    
+                    delete inProgress[nodeId];
+                    positioned[nodeId] = { x, y };
+                    return { x, y };
                 };
                 
                 data.nodes.forEach((n, idx) => {
-                    nodePositionCache[n.id] = { x: graphData.nodes[idx].x, y: graphData.nodes[idx].y };
-                });
-                
-                sig = new sigma({
-                    graph: graphData,
-                    container: container,
-                    settings: {
-                        drawLabels: true,
-                        drawEdgeLabels: false,
-                        defaultNodeColor: '#666',
-                        defaultEdgeColor: '#999',
-                        font: 'Arial',
-                        labelSize: 10,
-                        labelColor: '#333333',
-                        labelHover: true,
-                        labelSizeRatio: 1.5
+                    if (!positioned[n.id]) {
+                        getOrPosition(n.id, 0);
                     }
                 });
                 
-                sig.refresh();
+                const graphData = {
+                    nodes: data.nodes.map((n, idx) => {
+                        const pos = positioned[n.id] || { x: (Math.random() - 0.5) * maxDim, y: (Math.random() - 0.5) * maxDim };
+                        return {
+                            id: nodeIdxToUniqueId[idx],
+                            label: n.label,
+                            x: pos.x,
+                            y: pos.y,
+                            size: nodeCount > 300 ? 2 : (nodeCount > 100 ? 3 : 5),
+                            color: colors[n.element_type] || '#666',
+                            elementType: n.element_type
+                        };
+                    }),
+                    edges: finalEdges.map(e => ({
+                        ...e,
+                        size: nodeCount > 500 ? 0.3 : 0.5
+                    }))
+                };
                 
-                sig.bind('clickNode', function(e) {
-                    const node = e.data.node;
-                    alert('Element: ' + node.label + '\nType: ' + node.type + '\nID: ' + node.id);
+                data.nodes.forEach((n, idx) => {
+                    const pos = positioned[n.id];
+                    if (pos) nodePositionCache[n.id] = pos;
+                });
+                
+                const graph = new Graph();
+                graphData.nodes.forEach(n => {
+                    graph.addNode(n.id, {
+                        label: n.label,
+                        x: n.x,
+                        y: n.y,
+                        size: n.size,
+                        color: n.color,
+                        type: n.type
+                    });
+                });
+                graphData.edges.forEach(e => {
+                    if (graph.hasNode(e.source) && graph.hasNode(e.target)) {
+                        graph.addEdge(e.source, e.target, {
+                            size: e.size || 0.5,
+                            color: 'rgba(100,100,100,0.3)'
+                        });
+                    }
+                });
+                
+                if (sig) {
+                    sig.kill();
+                }
+                
+                sig = new Sigma(graph, container, {
+                    renderLabels: nodeCount < 200,
+                    labelFont: 'Arial',
+                    labelSize: 10,
+                    labelColor: '#333333',
+                    labelRenderedSizeThreshold: 6,
+                    defaultNodeColor: '#666',
+                    defaultEdgeColor: 'rgba(100,100,100,0.3)',
+                    defaultNodeType: 'circle',
+                    minCameraRatio: 0.1,
+                    maxCameraRatio: 10
+                });
+                
+                window.sig = sig;
+                
+                sig.on('clickNode', function(e) {
+                    const node = e.node;
+                    const attrs = graph.getNodeAttributes(node);
+                    alert('Element: ' + attrs.label + '\nType: ' + attrs.elementType + '\nID: ' + node);
                 });
             }
             
             function startLayout() {
-                if (sig) {
-                    if (sigma.layouts && sigma.layouts.config) {
-                        sigma.layouts.startForceAtlas2({ worker: false, iterations: 100 });
-                    } else {
-                        alert('ForceAtlas2 layout not available. Using default positioning.');
+                if (!sig) return;
+                
+                const graph = sig.graph;
+                const nodes = graph.nodes();
+                const edges = graph.edges();
+                const nodeCount = nodes.length;
+                
+                if (nodeCount === 0) return;
+                
+                const iterations = 150;
+                const springLength = nodeCount > 300 ? 60 : 80;
+                const springStrength = 0.08;
+                const repulsionStrength = nodeCount > 300 ? 300 : 500;
+                const damping = 0.9;
+                const BarnesHutTheta = 0.6;
+                
+                const velocities = {};
+                const oldDelta = {};
+                nodes.forEach(n => { 
+                    velocities[n] = { x: 0, y: 0 }; 
+                    oldDelta[n] = { x: 0, y: 0 };
+                });
+                
+                const nodeMass = {};
+                nodes.forEach(n => {
+                    const type = graph.getNodeAttribute(n, 'type');
+                    if (type === 'file' || type === 'module') nodeMass[n] = 3;
+                    else if (type === 'class' || type === 'struct') nodeMass[n] = 2;
+                    else nodeMass[n] = 1;
+                });
+                
+                const nodesArray = nodes.slice();
+                const n = nodesArray.length;
+                const xPos = nodesArray.map(n => graph.getNodeAttribute(n, 'x'));
+                const yPos = nodesArray.map(n => graph.getNodeAttribute(n, 'y'));
+                
+                function getCenterOfMass(nodeIndex) {
+                    let cx = 0, cy = 0, mass = 0;
+                    for (let i = 0; i < n; i++) {
+                        if (i === nodeIndex) continue;
+                        const dx = xPos[i] - xPos[nodeIndex];
+                        const dy = yPos[i] - yPos[nodeIndex];
+                        const dist = Math.sqrt(dx * dx + dy * dy);
+                        if (dist > BarnesHutTheta * 100) continue;
+                        const m = nodeMass[nodesArray[i]] || 1;
+                        cx += xPos[i] * m;
+                        cy += yPos[i] * m;
+                        mass += m;
+                    }
+                    return mass > 0 ? { x: cx / mass, y: cy / mass } : { x: xPos[nodeIndex], y: yPos[nodeIndex] };
+                }
+                
+                for (let iter = 0; iter < iterations; iter++) {
+                    for (let i = 0; i < n; i++) {
+                        const n1 = nodesArray[i];
+                        const n1Type = graph.getNodeAttribute(n1, 'type');
+                        let fx = 0, fy = 0;
+                        
+                        const center = getCenterOfMass(i);
+                        const dx = xPos[i] - center.x;
+                        const dy = yPos[i] - center.y;
+                        const distToCenter = Math.sqrt(dx * dx + dy * dy) || 1;
+                        const clusterForce = repulsionStrength * 0.3 / (distToCenter + 1);
+                        fx += (dx / distToCenter) * clusterForce;
+                        fy += (dy / distToCenter) * clusterForce;
+                        
+                        for (let j = 0; j < n; j++) {
+                            if (i === j) continue;
+                            const ddx = xPos[i] - xPos[j];
+                            const ddy = yPos[i] - yPos[j];
+                            const ddist = Math.sqrt(ddx * ddx + ddy * ddy) || 0.1;
+                            
+                            if (ddist > BarnesHutTheta * 100) continue;
+                            
+                            const m1 = nodeMass[n1] || 1;
+                            const m2 = nodeMass[nodesArray[j]] || 1;
+                            const force = repulsionStrength * m1 * m2 / (ddist * ddist);
+                            fx += (ddx / ddist) * force;
+                            fy += (ddy / ddist) * force;
+                        }
+                        
+                        edges.forEach(e => {
+                            const [src, tgt] = graph.extremities(e);
+                            if (src !== n1 && tgt !== n1) return;
+                            const other = src === n1 ? tgt : src;
+                            let otherIdx = -1;
+                            for (let k = 0; k < n; k++) {
+                                if (nodesArray[k] === other) { otherIdx = k; break; }
+                            }
+                            if (otherIdx < 0) return;
+                            
+                            const ddx = xPos[i] - xPos[otherIdx];
+                            const ddy = yPos[i] - yPos[otherIdx];
+                            const ddist = Math.sqrt(ddx * ddx + ddy * ddy) || 1;
+                            const displacement = ddist - springLength;
+                            const force = springStrength * displacement;
+                            fx -= (ddx / ddist) * force;
+                            fy -= (ddy / ddist) * force;
+                        });
+                        
+                        const d1 = damping;
+                        const d2 = 1 - damping;
+                        velocities[n1].x = velocities[n1].x * d1 + fx * d2 + oldDelta[n1].x * 0.2;
+                        velocities[n1].y = velocities[n1].y * d1 + fy * d2 + oldDelta[n1].y * 0.2;
+                        oldDelta[n1].x = velocities[n1].x;
+                        oldDelta[n1].y = velocities[n1].y;
+                    }
+                    
+                    for (let i = 0; i < n; i++) {
+                        const n1 = nodesArray[i];
+                        const maxMove = 10;
+                        const vx = Math.max(-maxMove, Math.min(maxMove, velocities[n1].x));
+                        const vy = Math.max(-maxMove, Math.min(maxMove, velocities[n1].y));
+                        xPos[i] += vx;
+                        yPos[i] += vy;
+                        graph.setNodeAttribute(n1, 'x', xPos[i]);
+                        graph.setNodeAttribute(n1, 'y', yPos[i]);
                     }
                 }
+                 
+                 sig.refresh();
+             }
+              
+            function zoomIn() { 
+                if (!sig) return;
+                const camera = sig.getCamera();
+                if (camera) camera.goTo({ ratio: camera.ratio * 0.7 }); 
+            }
+            function zoomOut() { 
+                if (!sig) return;
+                const camera = sig.getCamera();
+                if (camera) camera.goTo({ ratio: camera.ratio * 1.3 }); 
+            }
+            function resetZoom() { 
+                if (!sig) return;
+                const camera = sig.getCamera();
+                if (camera) camera.goTo({ x: 0, y: 0, ratio: 1 }); 
             }
             
-            function zoomIn() { if (sig && sig.camera) sigma.camera.goTo({ ratio: sigma.camera.ratio * 0.7 }); }
-            function zoomOut() { if (sig && sig.camera) sigma.camera.goTo({ ratio: sigma.camera.ratio * 1.3 }); }
-            function resetZoom() { if (sig && sig.camera) sigma.camera.goTo({ x: 0, y: 0, ratio: 1 }); }
-            
+            function applyLayout(layoutType) {
+                if (!sig) return;
+                
+                const graph = sig.graph;
+                const nodes = graph.nodes();
+                const nodeCount = nodes.length;
+                
+                if (nodeCount === 0) return;
+                
+                const nodesArray = nodes.slice();
+                const n = nodesArray.length;
+                
+                const centerX = 0;
+                const centerY = 0;
+                const spread = Math.max(100, Math.sqrt(nodeCount) * 5);
+                
+                if (layoutType === 'force') {
+                    const iterations = 100;
+                    const springLength = spread * 0.3;
+                    const springStrength = 0.05;
+                    const repulsionStrength = spread * spread * 0.1;
+                    const damping = 0.85;
+                    
+                    const velocities = {};
+                    nodes.forEach(n => { velocities[n] = { x: 0, y: 0 }; });
+                    
+                    const xPos = nodesArray.map(n => graph.getNodeAttribute(n, 'x'));
+                    const yPos = nodesArray.map(n => graph.getNodeAttribute(n, 'y'));
+                    
+                    for (let iter = 0; iter < iterations; iter++) {
+                        for (let i = 0; i < n; i++) {
+                            const n1 = nodesArray[i];
+                            let fx = 0, fy = 0;
+                            
+                            for (let j = 0; j < n; j++) {
+                                if (i === j) continue;
+                                const dx = xPos[i] - xPos[j];
+                                const dy = yPos[i] - yPos[j];
+                                const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+                                const force = repulsionStrength / (dist * dist);
+                                fx += (dx / dist) * force;
+                                fy += (dy / dist) * force;
+                            }
+                            
+                            graph.forEachEdge(n1, (e) => {
+                                const [src, tgt] = graph.extremities(e);
+                                const other = src === n1 ? tgt : src;
+                                let otherIdx = -1;
+                                for (let k = 0; k < n; k++) {
+                                    if (nodesArray[k] === other) { otherIdx = k; break; }
+                                }
+                                if (otherIdx < 0) return;
+                                
+                                const dx = xPos[i] - xPos[otherIdx];
+                                const dy = yPos[i] - yPos[otherIdx];
+                                const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+                                const displacement = dist - springLength;
+                                const force = springStrength * displacement;
+                                fx -= (dx / dist) * force;
+                                fy -= (dy / dist) * force;
+                            });
+                            
+                            velocities[n1].x = velocities[n1].x * damping + fx * (1 - damping);
+                            velocities[n1].y = velocities[n1].y * damping + fy * (1 - damping);
+                        }
+                        
+                        for (let i = 0; i < n; i++) {
+                            const n1 = nodesArray[i];
+                            const maxMove = spread * 0.2;
+                            const vx = Math.max(-maxMove, Math.min(maxMove, velocities[n1].x));
+                            const vy = Math.max(-maxMove, Math.min(maxMove, velocities[n1].y));
+                            xPos[i] += vx;
+                            yPos[i] += vy;
+                            graph.setNodeAttribute(n1, 'x', xPos[i]);
+                            graph.setNodeAttribute(n1, 'y', yPos[i]);
+                        }
+                    }
+                } else if (layoutType === 'circular') {
+                    const angleStep = (2 * Math.PI) / n;
+                    const radius = spread;
+                    nodesArray.forEach((node, i) => {
+                        const angle = i * angleStep;
+                        const x = centerX + radius * Math.cos(angle);
+                        const y = centerY + radius * Math.sin(angle);
+                        graph.setNodeAttribute(node, 'x', x);
+                        graph.setNodeAttribute(node, 'y', y);
+                    });
+                } else if (layoutType === 'grid') {
+                    const cols = Math.ceil(Math.sqrt(n));
+                    const cellSize = spread * 2 / cols;
+                    nodesArray.forEach((node, i) => {
+                        const row = Math.floor(i / cols);
+                        const col = i % cols;
+                        const x = centerX - (cols * cellSize) / 2 + col * cellSize;
+                        const y = centerY - (Math.ceil(n / cols) * cellSize) / 2 + row * cellSize;
+                        graph.setNodeAttribute(node, 'x', x);
+                        graph.setNodeAttribute(node, 'y', y);
+                    });
+                } else if (layoutType === 'hierarchical') {
+                    const parentMap = {};
+                    const childMap = {};
+                    graph.forEachEdge((e, attrs, src, tgt) => {
+                        if (!childMap[src]) childMap[src] = [];
+                        childMap[src].push(tgt);
+                        parentMap[tgt] = src;
+                    });
+                    
+                    const rootNodes = nodesArray.filter(n => !parentMap[n]);
+                    const positioned = {};
+                    const getDepth = (nodeId, depth = 0) => {
+                        const children = childMap[nodeId] || [];
+                        if (children.length === 0) return depth;
+                        return Math.max(...children.map(c => getDepth(c, depth + 1)));
+                    };
+                    
+                    const maxDepth = Math.max(...rootNodes.map(n => getDepth(n)));
+                    const levelHeight = spread * 1.5 / Math.max(maxDepth, 1);
+                    
+                    const positionLevel = (nodeId, depth, levelNodes) => {
+                        if (positioned[nodeId]) return;
+                        const levelWidth = spread * 2 / (levelNodes.length + 1);
+                        const levelIndex = levelNodes.indexOf(nodeId);
+                        const x = centerX - spread + (levelIndex + 1) * levelWidth;
+                        const y = centerY - spread * 0.7 + depth * levelHeight;
+                        positioned[nodeId] = { x, y };
+                        graph.setNodeAttribute(nodeId, 'x', x);
+                        graph.setNodeAttribute(nodeId, 'y', y);
+                        
+                        const children = childMap[nodeId] || [];
+                        children.forEach(c => positionLevel(c, depth + 1, childMap[nodeId] || []));
+                    };
+                    
+                    rootNodes.forEach((n, i) => {
+                        const angle = (2 * Math.PI * i) / Math.max(rootNodes.length, 1);
+                        const x = centerX + spread * 0.5 * Math.cos(angle);
+                        const y = centerY + spread * 0.5 * Math.sin(angle);
+                        positioned[n] = { x, y };
+                        graph.setNodeAttribute(n, 'x', x);
+                        graph.setNodeAttribute(n, 'y', y);
+                        const children = childMap[n] || [];
+                        children.forEach(c => positionLevel(c, 1, children));
+                    });
+                    
+                    nodesArray.forEach(n => {
+                        if (!positioned[n]) {
+                            positioned[n] = { x: centerX + (Math.random() - 0.5) * spread, y: centerY + (Math.random() - 0.5) * spread };
+                            graph.setNodeAttribute(n, 'x', positioned[n].x);
+                            graph.setNodeAttribute(n, 'y', positioned[n].y);
+                        }
+                    });
+                } else {
+                    nodesArray.forEach((node, i) => {
+                        const x = centerX + (Math.random() - 0.5) * spread * 2;
+                        const y = centerY + (Math.random() - 0.5) * spread * 2;
+                        graph.setNodeAttribute(node, 'x', x);
+                        graph.setNodeAttribute(node, 'y', y);
+                    });
+                }
+                
+                sig.refresh();
+            }
+             
             loadGraph();
         </script>"#;
 
