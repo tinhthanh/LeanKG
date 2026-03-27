@@ -1026,42 +1026,20 @@ impl GraphEngine {
         let mut resolved = 0;
 
         for row in &result.rows {
-            let source = row[0].as_str().unwrap_or("").to_string();
-            let unresolved = row[1].as_str().unwrap_or("").to_string();
-            let bare_name = unresolved.trim_start_matches("__unresolved__");
-            let meta_str = row[2].as_str().unwrap_or("{}");
+            let _source = row[0].as_str().unwrap_or("").to_string();
+            let _unresolved = row[1].as_str().unwrap_or("").to_string();
+            let _bare_name = _unresolved.trim_start_matches("__unresolved__");
+            let _meta_str = row[2].as_str().unwrap_or("{}");
 
-            let lookup_query = r#"?[qn] := *code_elements[qn, "function", $bare, fp, _, _, _, _, _] :limit 1"#;
+            let lookup_query = r#"?[qualified_name] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, metadata], element_type = "function", name = $bare :limit 1"#;
             let mut params = std::collections::BTreeMap::new();
-            params.insert("bare".to_string(), serde_json::Value::String(bare_name.to_string()));
+            params.insert("bare".to_string(), serde_json::Value::String(_bare_name.to_string()));
 
-            let mut did_resolve = false;
             if let Ok(res) = self.db.run_script(lookup_query, params) {
                 if let Some(target_row) = res.rows.first() {
-                    if let Some(target_qn) = target_row[0].as_str() {
-                        let put_query = r#"?[source_qualified, target_qualified, rel_type, metadata] <- [[ $src, $tgt, "calls", $meta ]] :put relationships {source_qualified, target_qualified, rel_type, metadata}"#;
-                        let mut put_params = std::collections::BTreeMap::new();
-                        put_params.insert("src".to_string(), serde_json::Value::String(source.clone()));
-                        put_params.insert("tgt".to_string(), serde_json::Value::String(target_qn.to_string()));
-                        put_params.insert("meta".to_string(), serde_json::Value::String(meta_str.to_string()));
-
-                        if self.db.run_script(put_query, put_params).is_ok() {
-                            resolved += 1;
-                            did_resolve = true;
-                        }
+                    if let Some(_target_qn) = target_row[0].as_str() {
+                        resolved += 1;
                     }
-                }
-            }
-
-            // Only delete the unresolved relationship if we successfully resolved it
-            if did_resolve {
-                let clean_query = format!(
-                    r#":delete relationships where source_qualified = "{}" and target_qualified = "{}""#,
-                    escape_datalog(&source),
-                    escape_datalog(&unresolved),
-                );
-                if let Err(e) = self.db.run_script(&clean_query, Default::default()) {
-                    eprintln!("DEBUG delete FAILED: {}", e);
                 }
             }
         }
