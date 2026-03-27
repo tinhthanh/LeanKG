@@ -1,7 +1,8 @@
-use crate::benchmark::data::{BenchmarkResult, OverheadResult};
+use crate::benchmark::data::BenchmarkResult;
 use std::error::Error;
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Command, Output, Stdio};
+use std::time::Duration;
 
 fn kilo_config_path() -> PathBuf {
     dirs::config_dir()
@@ -12,6 +13,31 @@ fn kilo_config_path() -> PathBuf {
 const KILO_MCP_WITH_LEANKG: &str = "mcp_settings_with_leankg.json";
 const KILO_MCP_WITHOUT_LEANKG: &str = "mcp_settings_without_leankg.json";
 const KILO_MCP_SETTINGS: &str = "kilo.json";
+
+trait WaitWithOutputTimeout {
+    fn wait_with_output_timeout(self, duration: Duration) -> Result<Output, ()>;
+}
+
+impl WaitWithOutputTimeout for std::process::Child {
+    fn wait_with_output_timeout(self, duration: Duration) -> Result<Output, ()> {
+        use std::thread;
+        use std::time::Instant;
+
+        let start = Instant::now();
+        let handle =
+            thread::spawn(move || self.wait_with_output().expect("wait_with_output failed"));
+
+        loop {
+            if handle.is_finished() {
+                return handle.join().map_err(|_| ());
+            }
+            if start.elapsed() >= duration {
+                return Err(());
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
+    }
+}
 
 pub struct BenchmarkRunner {
     output_dir: PathBuf,
@@ -63,17 +89,42 @@ impl BenchmarkRunner {
         };
         let dst = config_dir.join(KILO_MCP_SETTINGS);
         let _ = Command::new("cp").arg(src).arg(dst).output();
+
+        self.kill_leankg_processes();
+    }
+
+    fn kill_leankg_processes(&self) {
+        let _ = Command::new("pkill")
+            .arg("-f")
+            .arg("leankg.*mcp-stdio")
+            .output();
     }
 
     fn run_kilo(&self, prompt: &str) -> BenchmarkResult {
-        let output = Command::new("kilo")
+        let child = Command::new("kilo")
             .arg("run")
             .arg("--format")
             .arg("json")
             .arg("--auto")
             .arg(prompt)
-            .output()
-            .expect("Failed to execute kilo");
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("Failed to spawn kilo");
+
+        let output = match child.wait_with_output_timeout(Duration::from_secs(120)) {
+            Ok(result) => result,
+            Err(_) => {
+                return BenchmarkResult {
+                    total_tokens: 0,
+                    input_tokens: 0,
+                    cached_tokens: 0,
+                    token_percent: 0.0,
+                    build_time_seconds: 120.0,
+                    success: false,
+                };
+            }
+        };
 
         let stdout = String::from_utf8_lossy(&output.stdout);
 
