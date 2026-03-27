@@ -612,7 +612,7 @@ impl ToolHandler {
 
     fn search_code(&self, args: &Value) -> Result<Value, String> {
         let query = args["query"].as_str().ok_or("Missing 'query' parameter")?;
-        let limit = args["limit"].as_i64().unwrap_or(100) as usize;
+        let limit = args["limit"].as_i64().unwrap_or(20).min(50) as usize;
         let element_type = args["element_type"].as_str();
 
         let elements = self
