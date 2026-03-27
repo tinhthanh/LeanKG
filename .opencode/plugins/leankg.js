@@ -15,22 +15,27 @@ const getLeanKGContext = () => `
 LeanKG is a lightweight knowledge graph for codebase understanding.
 
 **Auto-Activated Tools:**
-- \`leankg_mcp_status\` - Check if LeanKG is initialized
-- \`leankg_mcp_init\` - Initialize LeanKG for a project
-- \`leankg_search_code\` - Search code elements by name/type
-- \`leankg_find_function\` - Locate function definitions
-- \`leankg_get_impact_radius\` - Calculate blast radius of changes
-- \`leankg_get_dependencies\` - Get direct imports of a file
-- \`leankg_get_dependents\` - Get files depending on target
-- \`leankg_get_context\` - Get AI-optimized context for a file
-- \`leankg_get_tested_by\` - Get test coverage info
-- \`leankg_query_file\` - Find files by name/pattern
-- \`leankg_get_call_graph\` - Get function call chains
-- \`leankg_find_large_functions\` - Find oversized functions
+- \`mcp_status\` - Check if LeanKG is initialized
+- \`mcp_init\` - Initialize LeanKG for a project
+- \`mcp_index\` - Index codebase
+- \`search_code\` - Search code elements by name/type
+- \`find_function\` - Locate function definitions
+- \`get_impact_radius\` - Calculate blast radius of changes
+- \`get_dependencies\` - Get direct imports of a file
+- \`get_dependents\` - Get files depending on target
+- \`get_context\` - Get AI-optimized context for a file
+- \`get_tested_by\` - Get test coverage info
+- \`query_file\` - Find files by name/pattern
+- \`get_call_graph\` - Get function call chains
+- \`find_large_functions\` - Find oversized functions
+- \`get_doc_for_file\` - Get documentation for a file
+- \`get_traceability\` - Get full traceability chain
+- \`get_code_tree\` - Get codebase structure
+- \`get_doc_tree\` - Get documentation tree
 
 **Workflow:**
-1. Before ANY codebase search/navigation, check \`leankg_mcp_status\`
-2. If not initialized, use \`leankg_mcp_init\` with project path
+1. Before ANY codebase search/navigation, check \`mcp_status\`
+2. If not initialized, use \`mcp_init\` with project path
 3. Use LeanKG tools first - only fallback to grep if LeanKG fails
 
 **When user asks about:**
