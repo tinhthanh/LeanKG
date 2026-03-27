@@ -1,14 +1,14 @@
 # Benchmark Comparison: find-query-engine
 
 ## With LeanKG
-- Total Tokens: 17290
-- Input: 2201
-- Cached: 14976
+- Total Tokens: 19655
+- Input: 17000
+- Cached: 2368
 
 ## Without LeanKG
-- Total Tokens: 18147
-- Input: 4343
-- Cached: 13632
+- Total Tokens: 17328
+- Input: 14727
+- Cached: 2368
 
 ## Overhead
-- Token Delta: -857
+- Token Delta: 2327

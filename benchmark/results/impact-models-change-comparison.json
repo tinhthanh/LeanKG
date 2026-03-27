@@ -1,24 +1,24 @@
 {
   "overhead": {
     "time_delta": 0.0,
-    "token_delta": -102,
+    "token_delta": -57,
     "token_delta_percent": 0.0
   },
   "task": "impact-models-change",
   "with_leankg": {
     "build_time_seconds": 0.0,
-    "cached_tokens": 14976,
-    "input_tokens": 2297,
+    "cached_tokens": 15680,
+    "input_tokens": 2662,
     "success": true,
     "token_percent": 0.0,
-    "total_tokens": 17734
+    "total_tokens": 19131
   },
   "without_leankg": {
     "build_time_seconds": 0.0,
-    "cached_tokens": 14781,
-    "input_tokens": 2542,
+    "cached_tokens": 14080,
+    "input_tokens": 4118,
     "success": true,
     "token_percent": 0.0,
-    "total_tokens": 17836
+    "total_tokens": 19188
   }
 }

@@ -1,24 +1,24 @@
 {
   "overhead": {
     "time_delta": 0.0,
-    "token_delta": -7445,
+    "token_delta": -5175,
     "token_delta_percent": 0.0
   },
   "task": "impl-new-tool",
   "with_leankg": {
     "build_time_seconds": 0.0,
-    "cached_tokens": 0,
-    "input_tokens": 11159,
+    "cached_tokens": 256,
+    "input_tokens": 31789,
     "success": true,
     "token_percent": 0.0,
-    "total_tokens": 11159
+    "total_tokens": 32166
   },
   "without_leankg": {
     "build_time_seconds": 0.0,
-    "cached_tokens": 18048,
-    "input_tokens": 411,
+    "cached_tokens": 2304,
+    "input_tokens": 34824,
     "success": true,
     "token_percent": 0.0,
-    "total_tokens": 18604
+    "total_tokens": 37341
   }
 }

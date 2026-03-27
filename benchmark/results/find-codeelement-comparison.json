@@ -1,24 +1,24 @@
 {
   "overhead": {
     "time_delta": 0.0,
-    "token_delta": 9,
+    "token_delta": 9933,
     "token_delta_percent": 0.0
   },
   "task": "find-codeelement",
   "with_leankg": {
     "build_time_seconds": 0.0,
-    "cached_tokens": 14976,
-    "input_tokens": 144,
+    "cached_tokens": 0,
+    "input_tokens": 15171,
     "success": true,
     "token_percent": 0.0,
-    "total_tokens": 15168
+    "total_tokens": 15204
   },
   "without_leankg": {
     "build_time_seconds": 0.0,
-    "cached_tokens": 14976,
-    "input_tokens": 146,
+    "cached_tokens": 0,
+    "input_tokens": 5271,
     "success": true,
     "token_percent": 0.0,
-    "total_tokens": 15159
+    "total_tokens": 5271
   }
 }

@@ -148,6 +148,7 @@ impl ToolRegistry {
                     "type": "object",
                     "properties": {
                         "query": {"type": "string"},
+                        "element_type": {"type": "string", "description": "Filter by element type (e.g., 'function', 'struct', 'module')"},
                         "limit": {"type": "integer", "description": "Maximum number of results to return (default: 100)"}
                     }
                 }),

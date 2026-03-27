@@ -286,13 +286,31 @@ impl MCPServer {
     fn find_project_root(&self) -> Result<std::path::PathBuf, String> {
         let current_dir = std::env::current_dir().map_err(|e| format!("Failed to get current dir: {}", e))?;
         
+        if current_dir.join(".leankg").exists() || current_dir.join("leankg.yaml").exists() {
+            tracing::debug!("Found .leankg/leankg.yaml at current dir: {}", current_dir.display());
+            return Ok(current_dir);
+        }
+        
+        if current_dir.join(".git").exists() {
+            tracing::debug!("Found .git at current dir: {}", current_dir.display());
+            return Ok(current_dir);
+        }
+        
         for dir in current_dir.ancestors() {
-            if dir.join(".leankg").exists() || dir.join("leankg.yaml").exists() {
-                tracing::debug!("Found project at {}", dir.display());
+            if dir.join(".git").exists() {
+                tracing::debug!("Found git repo at {}, this is project root", dir.display());
+                if dir.join(".leankg").exists() || dir.join("leankg.yaml").exists() {
+                    tracing::debug!("Found .leankg/leankg.yaml in project root: {}", dir.display());
+                    return Ok(dir.to_path_buf());
+                }
+                tracing::debug!("No .leankg in project root {}, will need auto-init", dir.display());
                 return Ok(dir.to_path_buf());
             }
-            if dir.join(".git").exists() {
-                tracing::debug!("Found git repo at {}, assuming project root", dir.display());
+        }
+        
+        for dir in current_dir.ancestors() {
+            if dir.join(".leankg").exists() || dir.join("leankg.yaml").exists() {
+                tracing::debug!("Found project at {} (parent without .git)", dir.display());
                 return Ok(dir.to_path_buf());
             }
         }
