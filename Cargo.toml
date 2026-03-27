@@ -33,6 +33,7 @@ async-trait = "0.1"
 dirs = "5"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+axum = "0.7"
 cozo = "0.2"
 notify = "7"
 parking_lot = "0.12"

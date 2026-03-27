@@ -7,7 +7,6 @@ use axum::{
 use serde::{Deserialize, Serialize};
 
 use crate::db;
-use crate::db::schema::CozoDb;
 
 use super::{ApiResponse, AppState};
 
@@ -40,6 +39,13 @@ pub struct AnnotationRequest {
 pub struct GraphData {
     pub nodes: Vec<GraphNode>,
     pub edges: Vec<GraphEdge>,
+    pub filtered: Option<GraphFilterInfo>,
+}
+
+#[derive(Serialize, Clone)]
+pub struct GraphFilterInfo {
+    pub tests_filtered: usize,
+    pub message: String,
 }
 
 #[derive(Serialize, Clone)]
@@ -55,6 +61,13 @@ pub struct GraphEdge {
     pub source: String,
     pub target: String,
     pub rel_type: String,
+}
+
+fn is_test_element(element: &crate::db::models::CodeElement) -> bool {
+    let qn = &element.qualified_name;
+    let fp = &element.file_path;
+    qn.contains("test_") || qn.contains("_test.") || qn.ends_with("_test") 
+        || fp.contains("_test.") || fp.contains("/test/") || fp.contains("\\test\\")
 }
 
 fn build_nav_html() -> String {
@@ -143,7 +156,8 @@ pub async fn index(State(state): State<AppState>) -> axum::response::Html<String
     if let Ok(graph) = state.get_graph_engine().await {
         if let Ok(elements) = graph.all_elements() {
             element_count = elements.len();
-            files_count = elements.iter().filter(|x| x.element_type == "file").count();
+            let unique_files: std::collections::HashSet<_> = elements.iter().map(|e| e.file_path.clone()).collect();
+            files_count = unique_files.len();
             functions_count = elements
                 .iter()
                 .filter(|x| x.element_type == "function")
@@ -720,8 +734,10 @@ pub async fn api_graph_data(State(state): State<AppState>) -> impl IntoResponse 
                     file_path: e.file_path.clone(),
                 })
                 .collect();
+            let node_ids: std::collections::HashSet<_> = nodes.iter().map(|n| n.id.clone()).collect();
             let edges: Vec<GraphEdge> = relationships
                 .iter()
+                .filter(|r| node_ids.contains(&r.source_qualified) && node_ids.contains(&r.target_qualified))
                 .map(|r| GraphEdge {
                     source: r.source_qualified.clone(),
                     target: r.target_qualified.clone(),
@@ -730,7 +746,7 @@ pub async fn api_graph_data(State(state): State<AppState>) -> impl IntoResponse 
                 .collect();
             ApiResponse {
                 success: true,
-                data: Some(GraphData { nodes, edges }),
+                data: Some(GraphData { nodes, edges, filtered: None }),
                 error: None,
             }
         }
@@ -763,8 +779,10 @@ pub async fn api_export_graph(State(state): State<AppState>) -> impl IntoRespons
                     file_path: e.file_path.clone(),
                 })
                 .collect();
+            let node_ids: std::collections::HashSet<_> = nodes.iter().map(|n| n.id.clone()).collect();
             let edges: Vec<GraphEdge> = relationships
                 .iter()
+                .filter(|r| node_ids.contains(&r.source_qualified) && node_ids.contains(&r.target_qualified))
                 .map(|r| GraphEdge {
                     source: r.source_qualified.clone(),
                     target: r.target_qualified.clone(),
@@ -773,7 +791,7 @@ pub async fn api_export_graph(State(state): State<AppState>) -> impl IntoRespons
                 .collect();
             ApiResponse {
                 success: true,
-                data: Some(GraphData { nodes, edges }),
+                data: Some(GraphData { nodes, edges, filtered: None }),
                 error: None,
             }
         }

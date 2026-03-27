@@ -8,6 +8,7 @@ mod graph;
 mod indexer;
 mod mcp;
 mod watcher;
+mod web;
 
 use clap::Parser;
 
@@ -66,11 +67,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         cli::CLICommand::Serve => {
-            println!("LeanKG serve command is deprecated.");
-            println!("Use CozoDB standalone web UI instead:");
-            println!("  1. Install: pip install pycozo");
-            println!("  2. Start: cozo server -e sqlite -p .leankg/leankg.db");
-            println!("  3. Open: http://localhost:9070");
+            let project_path = find_project_root()?;
+            let db_path = project_path.join(".leankg");
+            tokio::fs::create_dir_all(&db_path).await.ok();
+            web::start_server(8080, db_path).await?;
+        }
+        cli::CLICommand::Web => {
+            let project_path = find_project_root()?;
+            let db_path = project_path.join(".leankg");
+            tokio::fs::create_dir_all(&db_path).await.ok();
+            web::start_server(8080, db_path).await?;
         }
         cli::CLICommand::McpStdio { watch } => {
             let project_path = find_project_root()?;

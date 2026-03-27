@@ -3,7 +3,7 @@ pub mod handlers;
 use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
-    routing::get,
+    routing::{get, post, put},
     Json, Router,
 };
 use std::net::SocketAddr;
@@ -20,7 +20,6 @@ pub struct AppState {
 }
 
 impl AppState {
-    #[allow(dead_code)]
     pub async fn new(db_path: std::path::PathBuf) -> Result<Self, Box<dyn std::error::Error>> {
         Ok(Self {
             db_path,
@@ -28,7 +27,6 @@ impl AppState {
         })
     }
 
-    #[allow(dead_code)]
     pub async fn init_db(&self) -> Result<(), Box<dyn std::error::Error>> {
         let db = init_db(&self.db_path)?;
         let mut lock = self.db.write().await;
@@ -36,7 +34,6 @@ impl AppState {
         Ok(())
     }
 
-    #[allow(dead_code)]
     pub fn get_db(&self) -> Result<CozoDb, Box<dyn std::error::Error + Send + Sync>> {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
@@ -72,7 +69,6 @@ impl<T: serde::Serialize> IntoResponse for ApiResponse<T> {
     }
 }
 
-#[allow(dead_code)]
 pub async fn start_server(
     port: u16,
     db_path: std::path::PathBuf,
@@ -80,17 +76,31 @@ pub async fn start_server(
     let state = AppState::new(db_path).await?;
     state.init_db().await?;
 
-    async fn handler() -> &'static str {
-        "LeanKG Web UI - Use CLI commands for full functionality"
-    }
-
     let app = Router::new()
-        .route("/", get(handler))
-        .route("/health", get(handler))
+        .route("/", get(handlers::index))
+        .route("/health", get(handlers::index))
+        .route("/graph", get(handlers::graph))
+        .route("/browse", get(handlers::browse))
+        .route("/docs", get(handlers::docs))
+        .route("/annotate", get(handlers::annotate))
+        .route("/quality", get(handlers::quality))
+        .route("/export", get(handlers::export_page))
+        .route("/settings", get(handlers::settings))
+        .route("/api/elements", get(handlers::api_elements))
+        .route("/api/relationships", get(handlers::api_relationships))
+        .route("/api/annotations", get(handlers::api_annotations))
+        .route("/api/annotations", post(handlers::api_create_annotation))
+        .route("/api/annotations/:element", get(handlers::api_get_annotation))
+        .route("/api/annotations/:element", put(handlers::api_update_annotation))
+        .route("/api/search", get(handlers::api_search))
+        .route("/api/graph/data", get(handlers::api_graph_data))
+        .route("/api/export/graph", get(handlers::api_export_graph))
+        .route("/api/query", post(handlers::api_query))
         .with_state(state);
 
-    let addr = SocketAddr::from(([127, 0, 0, 1], port));
-    println!("Web UI listening on http://{}", addr);
+    let addr = SocketAddr::from(([0, 0, 0, 0], port));
+    println!("LeanKG Web UI listening on http://localhost:{}", port);
+    println!("Press Ctrl+C to stop");
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;
