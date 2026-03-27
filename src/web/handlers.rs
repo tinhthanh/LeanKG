@@ -325,24 +325,23 @@ pub async fn graph() -> axum::response::Html<String> {
                 const filteredNodes = [];
                 const filteredEdges = [];
                 const nodeIds = new Set();
+                const edgeNodeIds = new Set();
                 if (currentFilter === 'all') {
                     data.nodes.forEach(n => { filteredNodes.push(n); nodeIds.add(n.id); });
-                    data.edges.forEach(e => { if (nodeIds.has(e.source) && nodeIds.has(e.target)) filteredEdges.push(e); });
+                    data.edges.forEach(e => { if (nodeIds.has(e.source) && nodeIds.has(e.target)) { filteredEdges.push(e); edgeNodeIds.add(e.source); edgeNodeIds.add(e.target); } });
+                    const finalNodes = filteredNodes.filter(n => edgeNodeIds.has(n.id));
+                    return { nodes: finalNodes, edges: filteredEdges };
                 } else if (currentFilter === 'document') {
                     data.nodes.forEach(n => { if (docTypes.includes(n.element_type)) { filteredNodes.push(n); nodeIds.add(n.id); } });
-                    data.edges.forEach(e => { if (nodeIds.has(e.source) && nodeIds.has(e.target)) filteredEdges.push(e); });
+                    data.edges.forEach(e => { if (nodeIds.has(e.target)) { filteredEdges.push(e); edgeNodeIds.add(e.source); edgeNodeIds.add(e.target); } });
+                    const relatedNodes = data.nodes.filter(n => edgeNodeIds.has(n.id));
+                    return { nodes: relatedNodes, edges: filteredEdges };
                 } else if (currentFilter === 'function') {
                     data.nodes.forEach(n => { if (funcTypes.includes(n.element_type)) { filteredNodes.push(n); nodeIds.add(n.id); } });
-                    data.edges.forEach(e => { if (nodeIds.has(e.source) && nodeIds.has(e.target)) filteredEdges.push(e); });
+                    data.edges.forEach(e => { if (nodeIds.has(e.source) || nodeIds.has(e.target)) { filteredEdges.push(e); edgeNodeIds.add(e.source); edgeNodeIds.add(e.target); } });
+                    const relatedNodes = data.nodes.filter(n => edgeNodeIds.has(n.id));
+                    return { nodes: relatedNodes, edges: filteredEdges };
                 }
-                return filterOrphanedNodes({ nodes: filteredNodes, edges: filteredEdges });
-            }
-            function filterOrphanedNodes(data) {
-                const connectedNodes = new Set();
-                data.edges.forEach(e => { connectedNodes.add(e.source); connectedNodes.add(e.target); });
-                const filteredNodes = data.nodes.filter(n => connectedNodes.has(n.id));
-                const nodeIds = new Set(filteredNodes.map(n => n.id));
-                const filteredEdges = data.edges.filter(e => nodeIds.has(e.source) && nodeIds.has(e.target));
                 return { nodes: filteredNodes, edges: filteredEdges };
             }
             function initGraph(fullData) {
