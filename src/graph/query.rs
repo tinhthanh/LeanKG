@@ -1037,41 +1037,35 @@ impl GraphEngine {
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
 
-            let lookup = format!(
-                r#"?[qn] := *code_elements[qn, et, "{bare}", fp, _, _, _, _, _],
-                              et = "function", starts_with(fp, "{hint}")
-                         :limit 1"#,
-                bare = escape_datalog(bare_name),
-                hint = escape_datalog(callee_file_hint),
-            );
+            let lookup_query = r#"?[qn] := *code_elements[qn, et, $bare, fp, _, _, _, _, _], et = "function", starts_with(fp, $hint) :limit 1"#;
+            let mut params = std::collections::BTreeMap::new();
+            params.insert("bare".to_string(), serde_json::Value::String(bare_name.to_string()));
+            params.insert("hint".to_string(), serde_json::Value::String(callee_file_hint.to_string()));
 
-            if let Ok(res) = self.db.run_script(&lookup, Default::default()) {
+            if let Ok(res) = self.db.run_script(lookup_query, params) {
                 if let Some(target_row) = res.rows.first() {
                     if let Some(target_qn) = target_row[0].as_str() {
-                        self.db.run_script(
-                            &format!(
-                                r#"?[source_qualified, target_qualified, rel_type, metadata]
-                                   <- [["{}", "{}", "calls", "{}"]]
-                                   :put relationships {{source_qualified, target_qualified, rel_type, metadata}}"#,
-                                escape_datalog(&source),
-                                escape_datalog(target_qn),
-                                escape_datalog(meta_str),
-                            ),
-                            Default::default(),
-                        )?;
-                        resolved += 1;
+                        let put_query = r#"?[source_qualified, target_qualified, rel_type, metadata] <- [[ $src, $tgt, "calls", $meta ]] :put relationships {source_qualified, target_qualified, rel_type, metadata}"#;
+                        let mut put_params = std::collections::BTreeMap::new();
+                        put_params.insert("src".to_string(), serde_json::Value::String(source.clone()));
+                        put_params.insert("tgt".to_string(), serde_json::Value::String(target_qn.to_string()));
+                        put_params.insert("meta".to_string(), serde_json::Value::String(meta_str.to_string()));
+
+                        if self.db.run_script(put_query, put_params).is_ok() {
+                            resolved += 1;
+                        }
                     }
                 }
             }
 
-            self.db.run_script(
-                &format!(
-                    r#":delete relationships where source_qualified = "{}" and target_qualified = "{}""#,
-                    escape_datalog(&source),
-                    escape_datalog(&unresolved),
-                ),
-                Default::default(),
-            )?;
+            let clean_query = format!(
+                r#"?[source_qualified, target_qualified, rel_type, metadata] := *relationships[source_qualified, target_qualified, rel_type, metadata], source_qualified = "{}", target_qualified = "{}" :rm relationships {{source_qualified, target_qualified, rel_type, metadata}}"#,
+                escape_datalog(&source),
+                escape_datalog(&unresolved),
+            );
+            if let Err(e) = self.db.run_script(&clean_query, Default::default()) {
+                eprintln!("DEBUG rm FAILED: {}", e);
+            }
         }
 
         Ok(resolved)
