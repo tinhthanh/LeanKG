@@ -217,8 +217,6 @@ impl ToolHandler {
             .map(|e| e.split(',').map(|s| s.trim().to_string()).collect())
             .unwrap_or_default();
 
-        let db = crate::db::schema::init_db(&db_path).map_err(|e| format!("Database error: {}", e))?;
-        let graph_engine = crate::graph::GraphEngine::new(db);
         let mut parser_manager = crate::indexer::ParserManager::new();
         parser_manager.init_parsers().map_err(|e| format!("Parser init error: {}", e))?;
 
@@ -251,7 +249,7 @@ impl ToolHandler {
                 continue;
             }
 
-            match crate::indexer::index_file_sync(&graph_engine, &mut parser_manager, file_path) {
+            match crate::indexer::index_file_sync(&self.graph_engine, &mut parser_manager, file_path) {
                 Ok(_) => indexed += 1,
                 Err(_) => skipped += 1,
             }

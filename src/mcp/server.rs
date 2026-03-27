@@ -280,6 +280,12 @@ impl MCPServer {
         }
 
         tracing::info!("Auto-index complete");
+
+        {
+            let mut guard = self.graph_engine.lock();
+            *guard = None;
+        }
+
         Ok(())
     }
 
@@ -345,7 +351,14 @@ impl MCPServer {
         let graph_engine = self.get_graph_engine()?;
         let handler = ToolHandler::new(graph_engine, self.get_db_path());
         let args_value = serde_json::Value::Object(arguments);
-        handler.execute_tool(tool_name, &args_value).await
+        let result = handler.execute_tool(tool_name, &args_value).await;
+
+        if tool_name == "mcp_index" {
+            let mut guard = self.graph_engine.lock();
+            *guard = None;
+        }
+
+        result
     }
 }
 
