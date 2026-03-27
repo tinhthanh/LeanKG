@@ -153,4 +153,13 @@ pub enum CLICommand {
     },
     /// Global setup: configure MCP for all registered repos at once
     Setup {},
+    /// Run community detection to identify code clusters
+    DetectClusters {
+        /// Path to the project (default: current directory)
+        #[arg(long)]
+        path: Option<String>,
+        /// Minimum edges for a node to be considered a hub
+        #[arg(long, default_value = "5")]
+        min_hub_edges: usize,
+    },
 }

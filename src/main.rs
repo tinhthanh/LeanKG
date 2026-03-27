@@ -209,6 +209,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         cli::CLICommand::Setup {} => {
             setup_global()?;
         }
+        cli::CLICommand::DetectClusters { path, min_hub_edges: _ } => {
+            let project_path = if let Some(p) = path {
+                std::path::PathBuf::from(p)
+            } else {
+                find_project_root()?
+            };
+            let db_path = project_path.join(".leankg");
+            detect_clusters(&db_path)?;
+        }
     }
 
     Ok(())
@@ -1009,5 +1018,54 @@ fn setup_global() -> Result<(), Box<dyn std::error::Error>> {
     println!("\nGlobal MCP config written to: {}", config_path.display());
     println!("You can now use 'opencode --mcp-config ~/.config/mcp/leankg-global.json' to access all repositories.");
     
+    Ok(())
+}
+
+fn detect_clusters(db_path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+    if !db_path.exists() {
+        println!("LeanKG not initialized. Run 'leankg init' first.");
+        return Ok(());
+    }
+
+    let db = db::schema::init_db(db_path)?;
+    let detector = graph::clustering::CommunityDetector::new(&db);
+
+    println!("Running community detection...");
+    let clusters = detector.detect_communities()?;
+
+    if clusters.is_empty() {
+        println!("No clusters found. Make sure the codebase is indexed.");
+        return Ok(());
+    }
+
+    println!("\nDetected {} clusters:", clusters.len());
+
+    let stats = graph::clustering::get_cluster_stats(&clusters);
+    println!("  Total members: {}", stats.total_members);
+    println!("  Average cluster size: {:.1}", stats.avg_cluster_size);
+
+    let mut sorted_clusters: Vec<_> = clusters.values().collect();
+    sorted_clusters.sort_by(|a, b| b.members.len().cmp(&a.members.len()));
+
+    for cluster in sorted_clusters.iter().take(20) {
+        println!("\n  Cluster: {} ({})", cluster.label, cluster.id);
+        println!("    Members: {}", cluster.members.len());
+        println!("    Files: {:?}", cluster.representative_files);
+        for member in cluster.members.iter().take(5) {
+            println!("      - {}", member);
+        }
+        if cluster.members.len() > 5 {
+            println!("      ... and {} more", cluster.members.len() - 5);
+        }
+    }
+
+    if sorted_clusters.len() > 20 {
+        println!("\n... and {} more clusters", sorted_clusters.len() - 20);
+    }
+
+    println!("\nAssigning clusters to elements...");
+    detector.assign_clusters_to_elements()?;
+    println!("Done! Cluster assignments saved to the database.");
+
     Ok(())
 }
