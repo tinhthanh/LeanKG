@@ -129,7 +129,6 @@ impl DocIndexer {
             parent_qualified: None,
             metadata: serde_json::json!({
                 "category": category,
-                "headings": headings,
                 "title": title,
             }),
         };

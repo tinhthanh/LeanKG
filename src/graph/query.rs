@@ -484,26 +484,25 @@ impl GraphEngine {
             return Ok(());
         }
 
+        let query = r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, metadata] <- [[ $qn, $et, $nm, $fp, $ls, $le, $lg, $pq, $md ]] :put code_elements { qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, metadata }"#;
+
         for element in elements {
-            let metadata_str = escape_datalog(&serde_json::to_string(&element.metadata)?);
-            let parent_qualified_val = element.parent_qualified.as_ref()
-                .map(|s| format!("\"{}\"", escape_datalog(s)))
-                .unwrap_or_else(|| "null".to_string());
-            
-            let query = format!(
-                r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, metadata] <- [[ "{0}", "{1}", "{2}", "{3}", {4}, {5}, "{6}", {7}, "{8}" ]] :put code_elements {{ qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, metadata }}"#,
-                escape_datalog(&element.qualified_name),
-                escape_datalog(&element.element_type),
-                escape_datalog(&element.name),
-                escape_datalog(&element.file_path),
-                element.line_start,
-                element.line_end,
-                escape_datalog(&element.language),
-                parent_qualified_val,
-                metadata_str,
-            );
-            
-            self.db.run_script(&query, std::collections::BTreeMap::new())?;
+            let metadata_str = serde_json::to_string(&element.metadata)?;
+            let mut params = std::collections::BTreeMap::new();
+            params.insert("qn".to_string(), serde_json::Value::String(element.qualified_name.clone()));
+            params.insert("et".to_string(), serde_json::Value::String(element.element_type.clone()));
+            params.insert("nm".to_string(), serde_json::Value::String(element.name.clone()));
+            params.insert("fp".to_string(), serde_json::Value::String(element.file_path.clone()));
+            params.insert("ls".to_string(), serde_json::Value::Number(element.line_start.into()));
+            params.insert("le".to_string(), serde_json::Value::Number(element.line_end.into()));
+            params.insert("lg".to_string(), serde_json::Value::String(element.language.clone()));
+            match &element.parent_qualified {
+                Some(pq) => params.insert("pq".to_string(), serde_json::Value::String(pq.clone())),
+                None => params.insert("pq".to_string(), serde_json::Value::Null),
+            };
+            params.insert("md".to_string(), serde_json::Value::String(metadata_str));
+
+            self.db.run_script(query, params)?;
         }
 
         if let Some(first) = elements.first() {
@@ -524,29 +523,24 @@ impl GraphEngine {
         &self,
         element: &CodeElement,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let metadata_str = escape_datalog(&serde_json::to_string(&element.metadata)?);
-        let parent_qualified_val = element.parent_qualified.as_ref()
-            .map(|s| format!("\"{}\"", escape_datalog(s)))
-            .unwrap_or_else(|| "null".to_string());
+        let metadata_str = serde_json::to_string(&element.metadata)?;
+        let mut params = std::collections::BTreeMap::new();
+        params.insert("qn".to_string(), serde_json::Value::String(element.qualified_name.clone()));
+        params.insert("et".to_string(), serde_json::Value::String(element.element_type.clone()));
+        params.insert("nm".to_string(), serde_json::Value::String(element.name.clone()));
+        params.insert("fp".to_string(), serde_json::Value::String(element.file_path.clone()));
+        params.insert("ls".to_string(), serde_json::Value::Number(element.line_start.into()));
+        params.insert("le".to_string(), serde_json::Value::Number(element.line_end.into()));
+        params.insert("lg".to_string(), serde_json::Value::String(element.language.clone()));
+        match &element.parent_qualified {
+            Some(pq) => params.insert("pq".to_string(), serde_json::Value::String(pq.clone())),
+            None => params.insert("pq".to_string(), serde_json::Value::Null),
+        };
+        params.insert("md".to_string(), serde_json::Value::String(metadata_str));
 
-        let query = format!(
-            r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, metadata] <- [[ "{0}", "{1}", "{2}", "{3}", {4}, {5}, "{6}", {7}, "{8}" ]] :put code_elements {{ qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, metadata }}"#,
-            escape_datalog(&element.qualified_name),
-            escape_datalog(&element.element_type),
-            escape_datalog(&element.name),
-            escape_datalog(&element.file_path),
-            element.line_start,
-            element.line_end,
-            escape_datalog(&element.language),
-            parent_qualified_val,
-            metadata_str,
-        );
+        let query = r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, metadata] <- [[ $qn, $et, $nm, $fp, $ls, $le, $lg, $pq, $md ]] :put code_elements { qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, metadata }"#;
 
-        if let Err(e) = self.db.run_script(&query, std::collections::BTreeMap::new()) {
-            eprintln!("DEBUG insert_element FAILED: {}", query);
-            eprintln!("Error: {}", e);
-            return Err(e.into());
-        }
+        self.db.run_script(query, params)?;
 
         let cache = self.cache.clone();
         let file_path = element.file_path.clone();
@@ -564,21 +558,16 @@ impl GraphEngine {
         &self,
         relationship: &Relationship,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let metadata_str = escape_datalog(&serde_json::to_string(&relationship.metadata)?);
+        let metadata_str = serde_json::to_string(&relationship.metadata)?;
+        let mut params = std::collections::BTreeMap::new();
+        params.insert("sq".to_string(), serde_json::Value::String(relationship.source_qualified.clone()));
+        params.insert("tq".to_string(), serde_json::Value::String(relationship.target_qualified.clone()));
+        params.insert("rt".to_string(), serde_json::Value::String(relationship.rel_type.clone()));
+        params.insert("md".to_string(), serde_json::Value::String(metadata_str));
 
-        let query = format!(
-            r#"?[source_qualified, target_qualified, rel_type, metadata] <- [[ "{0}", "{1}", "{2}", "{3}" ]] :put relationships {{ source_qualified, target_qualified, rel_type, metadata }}"#,
-            escape_datalog(&relationship.source_qualified),
-            escape_datalog(&relationship.target_qualified),
-            escape_datalog(&relationship.rel_type),
-            metadata_str,
-        );
+        let query = r#"?[source_qualified, target_qualified, rel_type, metadata] <- [[ $sq, $tq, $rt, $md ]] :put relationships { source_qualified, target_qualified, rel_type, metadata }"#;
 
-        self.db.run_script(&query, std::collections::BTreeMap::new())
-            .map_err(|e| {
-                eprintln!("FAILED QUERY for {} -> {}: {}", relationship.source_qualified, relationship.target_qualified, query);
-                e
-            })?;
+        self.db.run_script(query, params)?;
 
         Ok(())
     }
@@ -591,18 +580,17 @@ impl GraphEngine {
             return Ok(());
         }
 
+        let query = r#"?[source_qualified, target_qualified, rel_type, metadata] <- [[ $sq, $tq, $rt, $md ]] :put relationships { source_qualified, target_qualified, rel_type, metadata }"#;
+
         for rel in relationships {
-            let metadata_str = escape_datalog(&serde_json::to_string(&rel.metadata)?);
-            
-            let query = format!(
-                r#"?[source_qualified, target_qualified, rel_type, metadata] <- [[ "{0}", "{1}", "{2}", "{3}" ]] :put relationships {{ source_qualified, target_qualified, rel_type, metadata }}"#,
-                escape_datalog(&rel.source_qualified),
-                escape_datalog(&rel.target_qualified),
-                escape_datalog(&rel.rel_type),
-                metadata_str,
-            );
-            
-            self.db.run_script(&query, std::collections::BTreeMap::new())?;
+            let metadata_str = serde_json::to_string(&rel.metadata)?;
+            let mut params = std::collections::BTreeMap::new();
+            params.insert("sq".to_string(), serde_json::Value::String(rel.source_qualified.clone()));
+            params.insert("tq".to_string(), serde_json::Value::String(rel.target_qualified.clone()));
+            params.insert("rt".to_string(), serde_json::Value::String(rel.rel_type.clone()));
+            params.insert("md".to_string(), serde_json::Value::String(metadata_str));
+
+            self.db.run_script(query, params)?;
         }
 
         if let Some(first) = relationships.first() {
