@@ -220,6 +220,12 @@ pub async fn graph() -> axum::response::Html<String> {
         <div class="card">
             <h2>Code Dependency Graph</h2>
             <p style="color: #666; margin-bottom: 15px;">Interactive visualization of code elements and their relationships.</p>
+            <div id="graph-filter" style="margin-bottom: 15px; display: flex; gap: 8px; flex-wrap: wrap;">
+                <button class="filter-btn active" data-filter="all" onclick="setFilter('all')">All</button>
+                <button class="filter-btn" data-filter="document" onclick="setFilter('document')">Document</button>
+                <button class="filter-btn" data-filter="function" onclick="setFilter('function')">Function</button>
+                <button class="filter-btn" data-filter="mapping" onclick="setFilter('mapping')">Mapping</button>
+            </div>
             <div id="graph-container"><div class="loading">Loading graph data...</div></div>
         </div>
         <div class="card">
@@ -231,35 +237,84 @@ pub async fn graph() -> axum::response::Html<String> {
                 <button onclick="toggleLabels()">Toggle Labels</button>
             </div>
         </div>
+        <style>
+            .filter-btn { background: #e0e0e0; color: #333; padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer; font-weight: 500; transition: all 0.2s; }
+            .filter-btn:hover { background: #d0d0d0; }
+            .filter-btn.active { background: #0066cc; color: #fff; }
+        </style>
         <script>
             let svg, g, zoom, nodes, labelsVisible = true;
+            let graphDataCache = null;
+            let currentFilter = 'all';
             const width = 1400, height = 600;
+            const docTypes = ['document', 'doc_section'];
+            const funcTypes = ['function', 'class', 'struct'];
+            const mappingRels = ['imports', 'calls', 'references', 'documented_by', 'tested_by', 'tests', 'contains'];
+            function isTestElement(node) {
+                const qn = node.id.toLowerCase();
+                const fp = node.file_path.toLowerCase();
+                return qn.includes('test_') || qn.includes('_test.') || qn.endsWith('_test') 
+                    || fp.includes('_test.') || fp.includes('/test/') || fp.includes('\\test\\')
+                    || fp.includes('benchmark');
+            }
+            function filterTestElements(data) {
+                const nodeIds = new Set();
+                data.nodes.forEach(n => { if (!isTestElement(n)) nodeIds.add(n.id); });
+                const filteredEdges = data.edges.filter(e => nodeIds.has(e.source) && nodeIds.has(e.target));
+                const filteredNodes = data.nodes.filter(n => nodeIds.has(n.id));
+                return { nodes: filteredNodes, edges: filteredEdges };
+            }
             async function loadGraph() {
                 try {
                     const response = await fetch('/api/graph/data');
                     const data = await response.json();
-                    if (data.success && data.data) initGraph(data.data);
+                    if (data.success && data.data) { graphDataCache = filterTestElements(data.data); initGraph(graphDataCache); }
                     else document.getElementById('graph-container').innerHTML = '<div class="error">No graph data available. Index your codebase first.</div>';
                 } catch (e) {
                     document.getElementById('graph-container').innerHTML = '<div class="error">Failed to load graph: ' + e.message + '</div>';
                 }
             }
-            function initGraph(graphData) {
+            function setFilter(filter) {
+                currentFilter = filter;
+                document.querySelectorAll('.filter-btn').forEach(btn => btn.classList.remove('active'));
+                document.querySelector('.filter-btn[data-filter="' + filter + '"]').classList.add('active');
+                if (graphDataCache) initGraph(graphDataCache);
+            }
+            function getFilteredData(data) {
+                if (currentFilter === 'all') return data;
+                const filteredNodes = [];
+                const filteredEdges = [];
+                const nodeIds = new Set();
+                if (currentFilter === 'document') {
+                    data.nodes.forEach(n => { if (docTypes.includes(n.element_type)) { filteredNodes.push(n); nodeIds.add(n.id); } });
+                    data.edges.forEach(e => { if (nodeIds.has(e.source) && nodeIds.has(e.target)) filteredEdges.push(e); });
+                } else if (currentFilter === 'function') {
+                    data.nodes.forEach(n => { if (funcTypes.includes(n.element_type)) { filteredNodes.push(n); nodeIds.add(n.id); } });
+                    data.edges.forEach(e => { if (nodeIds.has(e.source) && nodeIds.has(e.target)) filteredEdges.push(e); });
+                } else if (currentFilter === 'mapping') {
+                    data.edges.forEach(e => { if (mappingRels.includes(e.rel_type)) { nodeIds.add(e.source); nodeIds.add(e.target); } });
+                    data.nodes.forEach(n => { if (nodeIds.has(n.id)) filteredNodes.push(n); });
+                    data.edges.forEach(e => { if (mappingRels.includes(e.rel_type)) filteredEdges.push(e); });
+                }
+                return { nodes: filteredNodes, edges: filteredEdges };
+            }
+            function initGraph(fullData) {
+                const data = getFilteredData(fullData);
                 const container = document.getElementById('graph-container');
                 container.innerHTML = '';
                 svg = d3.select('#graph-container').append('svg').attr('width', '100%').attr('height', height);
                 zoom = d3.zoom().scaleExtent([0.1, 4]).on('zoom', (e) => g.attr('transform', e.transform));
                 svg.call(zoom);
                 g = svg.append('g');
-                const simulation = d3.forceSimulation(graphData.nodes)
-                    .force('link', d3.forceLink(graphData.edges).id(d => d.id).distance(100))
+                const simulation = d3.forceSimulation(data.nodes)
+                    .force('link', d3.forceLink(data.edges).id(d => d.id).distance(100))
                     .force('charge', d3.forceManyBody().strength(-300))
                     .force('center', d3.forceCenter(width / 2, height / 2))
                     .force('collision', d3.forceCollide().radius(30));
-                const link = g.append('g').selectAll('line').data(graphData.edges).join('line').attr('class', 'link').attr('stroke-width', 1.5);
-                const node = g.append('g').selectAll('g').data(graphData.nodes).join('g').attr('class', 'node')
+                const link = g.append('g').selectAll('line').data(data.edges).join('line').attr('class', 'link').attr('stroke-width', 1.5);
+                const node = g.append('g').selectAll('g').data(data.nodes).join('g').attr('class', 'node')
                     .call(d3.drag().on('start', dragstarted).on('drag', dragged).on('end', dragended));
-                const colors = {'file': '#2e7d32', 'function': '#1565c0', 'class': '#7b1fa2', 'module': '#e65100'};
+                const colors = {'file': '#2e7d32', 'function': '#1565c0', 'class': '#7b1fa2', 'module': '#e65100', 'document': '#e65100', 'doc_section': '#ff9800', 'struct': '#1565c0'};
                 node.append('circle').attr('r', 15).attr('fill', d => colors[d.element_type] || '#666');
                 node.append('text').text(d => d.label).attr('x', 20).attr('y', 5).style('display', labelsVisible ? 'block' : 'none');
                 node.on('click', (e, d) => { alert('Element: ' + d.label + '\nType: ' + d.element_type + '\nFile: ' + d.file_path); });
@@ -290,10 +345,6 @@ pub async fn browse(State(state): State<AppState>) -> axum::response::Html<Strin
         vec![]
     };
 
-    let mut files: Vec<_> = elements
-        .iter()
-        .filter(|e| e.element_type == "file")
-        .collect();
     let mut functions: Vec<_> = elements
         .iter()
         .filter(|e| e.element_type == "function")
@@ -303,11 +354,17 @@ pub async fn browse(State(state): State<AppState>) -> axum::response::Html<Strin
         .filter(|e| e.element_type == "class")
         .collect();
 
-    files.sort_by(|a, b| a.qualified_name.cmp(&b.qualified_name));
+    let mut file_paths: std::collections::HashSet<_> = elements.iter().map(|e| e.file_path.clone()).collect();
+    let mut files: Vec<_> = file_paths.drain().map(|fp| {
+        let count = elements.iter().filter(|e| e.file_path == fp).count();
+        (fp, count)
+    }).collect();
+    files.sort_by(|a, b| a.0.cmp(&b.0));
+
     functions.sort_by(|a, b| a.qualified_name.cmp(&b.qualified_name));
     classes.sort_by(|a, b| a.qualified_name.cmp(&b.qualified_name));
 
-    let files_html: String = files.iter().map(|e| format!(r#"<tr><td><span class="badge badge-file">file</span></td><td><code>{}</code></td><td>{}</td><td>{}</td></tr>"#, e.qualified_name, e.file_path, e.line_end - e.line_start + 1)).collect();
+    let files_html: String = files.iter().map(|(fp, count)| format!(r#"<tr><td><span class="badge badge-file">file</span></td><td><code>{}</code></td><td>{}</td><td>{}</td></tr>"#, fp, fp, count)).collect();
     let functions_html: String = functions.iter().take(100).map(|e| format!(r#"<tr><td><span class="badge badge-function">function</span></td><td><code>{}</code></td><td>{}</td><td>{}</td></tr>"#, e.qualified_name, e.file_path, e.line_end - e.line_start + 1)).collect();
     let classes_html: String = classes.iter().map(|e| format!(r#"<tr><td><span class="badge badge-class">class</span></td><td><code>{}</code></td><td>{}</td><td>{}</td></tr>"#, e.qualified_name, e.file_path, e.line_end - e.line_start + 1)).collect();
 

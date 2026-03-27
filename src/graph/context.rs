@@ -97,16 +97,16 @@ impl<'a> ContextProvider<'a> {
         &self,
         file_path: &str,
     ) -> Result<ContextResult, Box<dyn std::error::Error>> {
-        let file_element = self.graph.find_element(file_path)?;
-
         let mut context_elements = Vec::new();
 
-        if let Some(file) = file_element {
-            let priority = self.determine_priority(&file);
+        let file_elements = self.graph.get_elements_by_file(file_path)?;
+        for elem in file_elements {
+            let priority = self.determine_priority(&elem);
+            let token_count = Self::element_tokens(&elem);
             context_elements.push(ContextElement {
-                element: file.clone(),
+                element: elem,
                 priority,
-                token_count: Self::element_tokens(&file),
+                token_count,
             });
         }
 
@@ -125,16 +125,6 @@ impl<'a> ContextProvider<'a> {
                     token_count,
                 });
             }
-        }
-
-        let children = self.get_child_elements(file_path)?;
-        for child in children {
-            let token_count = Self::element_tokens(&child);
-            context_elements.push(ContextElement {
-                element: child,
-                priority: ContextPriority::Contained,
-                token_count,
-            });
         }
 
         context_elements.sort_by(|a, b| {

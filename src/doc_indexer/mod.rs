@@ -263,8 +263,9 @@ impl DocIndexer {
 
     fn extract_code_references<'a>(&self, content: &'a str) -> Vec<(String, String)> {
         let mut refs = Vec::new();
-        let file_pattern = regex::Regex::new(r"\b([\w\-]+\.(?:go|rs|ts|tsx|js|jsx|py))\b").unwrap();
-        let qualified_pattern = regex::Regex::new(r"([\w\.]+(?:::\w+)+)").unwrap();
+        let file_pattern =
+            regex::Regex::new(r"\b([\w\-/]+\.(?:go|rs|ts|tsx|js|jsx|py))\b").unwrap();
+        let qualified_pattern = regex::Regex::new(r"([\w\.\-/]+(?:::\w+)+)").unwrap();
         let mut in_code_block = false;
 
         for line in content.lines() {
@@ -288,10 +289,7 @@ impl DocIndexer {
             for cap in qualified_pattern.captures_iter(trimmed) {
                 if let Some(m) = cap.get(0) {
                     let target = m.as_str().to_string();
-                    if target.contains("::")
-                        && !target.starts_with("src/")
-                        && !target.starts_with("lib/")
-                    {
+                    if target.contains("::") {
                         let context = trimmed.chars().take(100).collect::<String>();
                         refs.push((target, context));
                     }

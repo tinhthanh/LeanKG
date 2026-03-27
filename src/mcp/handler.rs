@@ -914,7 +914,11 @@ impl ToolHandler {
         let mut tree = serde_json::Map::new();
 
         for elem in &elements {
-            if elem.element_type == "file" || elem.qualified_name.contains("::") {
+            let is_code_element = matches!(
+                elem.element_type.as_str(),
+                "function" | "struct" | "class" | "module" | "interface" | "enum" | "trait"
+            );
+            if !is_code_element {
                 continue;
             }
 
