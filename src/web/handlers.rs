@@ -482,6 +482,17 @@ pub async fn graph() -> axum::response::Html<String> {
                     }
                 });
                 
+                const nodeDegrees = {};
+                connectedNodes.forEach(n => nodeDegrees[n.id] = 0);
+                finalEdges.forEach(e => {
+                    if (nodeDegrees[e.source] !== undefined) nodeDegrees[e.source]++;
+                    if (nodeDegrees[e.target] !== undefined) nodeDegrees[e.target]++;
+                });
+                
+                const maxDegree = Math.max(...Object.values(nodeDegrees), 1);
+                const MIN_NODE_SIZE = 3;
+                const MAX_NODE_SIZE = 20;
+                
                 const graphData = {
                     nodes: connectedNodes.map(n => {
                         const pos = positioned[n.id] || { x: (Math.random() - 0.5) * maxDim, y: (Math.random() - 0.5) * maxDim };
@@ -489,14 +500,17 @@ pub async fn graph() -> axum::response::Html<String> {
                             pos.x = (Math.random() - 0.5) * maxDim;
                             pos.y = (Math.random() - 0.5) * maxDim;
                         }
+                        const degree = nodeDegrees[n.id] || 0;
+                        const size = MIN_NODE_SIZE + ((degree / maxDegree) * (MAX_NODE_SIZE - MIN_NODE_SIZE));
                         return {
                             id: n.id,
                             label: n.label,
                             x: pos.x,
                             y: pos.y,
-                            size: nodeCount > 300 ? 2 : (nodeCount > 100 ? 3 : 5),
+                            size: nodeCount > 500 ? Math.min(size, 8) : (nodeCount > 300 ? Math.min(size, 6) : size),
                             color: colors[n.element_type] || '#666',
-                            elementType: n.element_type
+                            elementType: n.element_type,
+                            degree: degree
                         };
                     }),
                     edges: finalEdges.map(e => ({
@@ -518,7 +532,8 @@ pub async fn graph() -> axum::response::Html<String> {
                         y: n.y,
                         size: n.size,
                         color: n.color,
-                        elementType: n.elementType
+                        elementType: n.elementType,
+                        degree: n.degree
                     });
                 });
                 graphData.edges.forEach(e => {
@@ -535,14 +550,18 @@ pub async fn graph() -> axum::response::Html<String> {
                     sig.kill();
                 }
                 
+                let hoveredNode = null;
+                const NODE_FADE_COLOR = '#ccc';
+                const EDGE_FADE_COLOR = 'rgba(200,200,200,0.3)';
+                
                 sig = new Sigma(graph, container, {
                     renderLabels: true,
                     labelFont: 'Arial',
-                    labelSize: 14,
+                    labelSize: 12,
                     labelColor: '#333333',
-                    labelRenderedSizeThreshold: 6,
+                    labelRenderedSizeThreshold: 8,
                     defaultNodeColor: '#666',
-                    defaultEdgeColor: 'rgba(150,150,150,0.8)',
+                    defaultEdgeColor: 'rgba(150,150,150,0.6)',
                     defaultNodeType: 'circle',
                     defaultEdgeType: 'arrow',
                     minCameraRatio: 0.01,
@@ -551,9 +570,42 @@ pub async fn graph() -> axum::response::Html<String> {
                     hideLabelsOnMove: false,
                     enableEdgeClickEvents: false,
                     enableNodeClickEvents: true,
+                    nodeReducer: (node, data) => {
+                        if (hoveredNode) {
+                            const isConnected = node === hoveredNode || graph.hasEdge(node, hoveredNode) || graph.hasEdge(hoveredNode, node);
+                            return isConnected ? { ...data, zIndex: 1 } : { ...data, zIndex: 0, label: '', color: NODE_FADE_COLOR, hidden: false };
+                        }
+                        return data;
+                    },
+                    edgeReducer: (edge, data) => {
+                        if (hoveredNode) {
+                            const [src, tgt] = graph.extremities(edge);
+                            const isConnected = src === hoveredNode || tgt === hoveredNode;
+                            return isConnected ? { ...data, color: '#666', size: Math.min(data.size * 2, 4), zIndex: 1 } : { ...data, color: EDGE_FADE_COLOR, hidden: true };
+                        }
+                        return data;
+                    }
                 });
                 
                 window.sig = sig;
+                
+                sig.getGraph().forEachNode((node) => {
+                    const edges = graph.edges().filter(eid => {
+                        const [src, tgt] = graph.extremities(eid);
+                        return src === node || tgt === node;
+                    });
+                    graph.setNodeAttribute(node, 'connectionCount', edges.length);
+                });
+                
+                sig.on('enterNode', ({ node }) => {
+                    hoveredNode = node;
+                    sig.refresh();
+                });
+                
+                sig.on('leaveNode', () => {
+                    hoveredNode = null;
+                    sig.refresh();
+                });
                 
                 sig.on('clickNode', function(e) {
                     const node = e.node;

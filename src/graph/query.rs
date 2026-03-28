@@ -1123,19 +1123,23 @@ impl GraphEngine {
     }
 
     pub fn resolve_call_edges(&self) -> Result<usize, Box<dyn std::error::Error>> {
-        let query = r#"
-            ?[source_qualified, target_qualified, metadata]
-            := *relationships[source_qualified, target_qualified, "calls", metadata],
-               starts_with(target_qualified, "__unresolved__")
-        "#;
-        let result = self.db.run_script(query, Default::default())?;
+        let query = format!(
+            r#"?[source_qualified, target_qualified, rel_type, confidence, metadata] := *relationships[source_qualified, target_qualified, rel_type, confidence, metadata], rel_type = "{}""#,
+            "calls"
+        );
+        let result = self.db.run_script(&query, Default::default())?;
         let mut resolved = 0;
 
         for row in &result.rows {
             let source = row[0].as_str().unwrap_or("").to_string();
-            let unresolved = row[1].as_str().unwrap_or("").to_string();
-            let bare_name = unresolved.trim_start_matches("__unresolved__");
-            let meta_str = row[2].as_str().unwrap_or("{}");
+            let target_qualified = row[1].as_str().unwrap_or("").to_string();
+            
+            if !target_qualified.starts_with("__unresolved__") {
+                continue;
+            }
+            
+            let meta_str = row[4].as_str().unwrap_or("{}");
+            let bare_name = target_qualified.trim_start_matches("__unresolved__");
 
             let callee_file_hint: Option<String> = serde_json::from_str::<serde_json::Value>(meta_str)
                 .ok()
@@ -1155,7 +1159,7 @@ impl GraphEngine {
                 resolved += 1;
             }
 
-            self.delete_relationship(&source, &unresolved)?;
+            self.delete_relationship(&source, &target_qualified)?;
         }
 
         Ok(resolved)
