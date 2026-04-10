@@ -37,13 +37,21 @@ pub fn is_test_file(file_path: &str) -> bool {
                 || path.components().any(|c| c.as_os_str() == "test")
         }
         "cpp" | "cc" | "cxx" => {
-            file_name.ends_with("_test.cpp") || file_name.starts_with("test_") || file_name.ends_with("Test.cpp")
+            file_name.ends_with("_test.cpp")
+                || file_name.starts_with("test_")
+                || file_name.ends_with("Test.cpp")
         }
-        "cs" => {
-            file_name.ends_with("Test.cs") || file_name.ends_with("Tests.cs")
+        "cs" => file_name.ends_with("Test.cs") || file_name.ends_with("Tests.cs"),
+        "php" => file_name.ends_with("Test.php") || file_name.ends_with("Tests.php"),
+        "dart" => {
+            file_name.ends_with("_test.dart")
+                || file_name.ends_with("_dart_test.dart")
+                || path.components().any(|c| c.as_os_str() == "test")
         }
-        "php" => {
-            file_name.ends_with("Test.php") || file_name.ends_with("Tests.php")
+        "swift" => {
+            file_name.ends_with("Tests.swift")
+                || file_name.ends_with("_tests.swift")
+                || path.components().any(|c| c.as_os_str() == "Tests")
         }
         _ => false,
     }
@@ -107,6 +115,13 @@ pub fn is_noise_call(name: &str) -> bool {
             // C++ / C# / PHP standard lib concepts
             | "Console.WriteLine" | "Console.Write"
             | "std::cout" | "printf" | "echo" | "print_r" | "var_dump"
+            // Dart stdlib
+            | "main"
+            | "List" | "Map" | "Set" | "Future" | "Stream"
+            // Swift stdlib
+            | "fatalError" | "precondition"
+            | "Int" | "Double" | "Bool" | "Array" | "Dictionary" | "Set"
+            | "guard" | "defer" | "switch" | "case"
     ) || name.len() < 2
 }
 
@@ -204,6 +219,24 @@ pub fn get_tested_file_path(file_path: &str) -> Option<String> {
                 None
             }
         }
+        "dart" => {
+            if file_name.ends_with("_test.dart") {
+                Some(file_name.trim_end_matches("_test.dart").to_string() + ".dart")
+            } else if file_name.ends_with("_dart_test.dart") {
+                Some(file_name.trim_end_matches("_dart_test.dart").to_string() + ".dart")
+            } else {
+                None
+            }
+        }
+        "swift" => {
+            if file_name.ends_with("Tests.swift") {
+                Some(file_name.trim_end_matches("Tests.swift").to_string() + ".swift")
+            } else if file_name.ends_with("_tests.swift") {
+                Some(file_name.trim_end_matches("_tests.swift").to_string() + ".swift")
+            } else {
+                None
+            }
+        }
         _ => None,
     }?;
 
@@ -294,7 +327,7 @@ impl<'a> EntityExtractor<'a> {
         elements: &mut Vec<CodeElement>,
         relationships: &mut Vec<Relationship>,
     ) {
-        let node_type = node.kind(); 
+        let node_type = node.kind();
 
         match node_type {
             "function_declaration"
@@ -307,9 +340,16 @@ impl<'a> EntityExtractor<'a> {
             | "secondary_constructor" => {
                 self.extract_function(node, parent, elements);
             }
-            "class_declaration" | "type_declaration" | "class_def" | "struct_item"
-            | "class_definition" | "enum_declaration" | "record_declaration"
-            | "object_declaration" | "companion_object" | "struct_specifier"
+            "class_declaration"
+            | "type_declaration"
+            | "class_def"
+            | "struct_item"
+            | "class_definition"
+            | "enum_declaration"
+            | "record_declaration"
+            | "object_declaration"
+            | "companion_object"
+            | "struct_specifier"
             | "namespace_definition" => {
                 self.extract_class(node, parent, elements);
             }
@@ -384,14 +424,15 @@ impl<'a> EntityExtractor<'a> {
 
     fn extract_function(&self, node: Node, parent: Option<&str>, elements: &mut Vec<CodeElement>) {
         // For Java constructor_declaration or Kotlin secondary_constructor, the name comes from the class (first identifier)
-        let name = if node.kind() == "constructor_declaration" || node.kind() == "secondary_constructor" {
-            self.get_node_name(node).or_else(|| {
-                // Fallback: use parent name if available
-                parent.map(String::from)
-            })
-        } else {
-            self.get_node_name(node)
-        };
+        let name =
+            if node.kind() == "constructor_declaration" || node.kind() == "secondary_constructor" {
+                self.get_node_name(node).or_else(|| {
+                    // Fallback: use parent name if available
+                    parent.map(String::from)
+                })
+            } else {
+                self.get_node_name(node)
+            };
         if let Some(name) = name {
             let qualified_name = format!("{}::{}", self.file_path, name);
             let (signature, sig_end) = self.extract_function_signature(node);
@@ -413,7 +454,7 @@ impl<'a> EntityExtractor<'a> {
         }
     }
 
-    fn extract_class(&self, node: Node, parent: Option<&str>, elements: &mut Vec<CodeElement>) { 
+    fn extract_class(&self, node: Node, parent: Option<&str>, elements: &mut Vec<CodeElement>) {
         if let Some(name) = self.get_node_name(node) {
             let qualified_name = format!("{}::{}", self.file_path, name);
             elements.push(CodeElement {
@@ -767,7 +808,7 @@ impl<'a> EntityExtractor<'a> {
     }
 
     fn get_node_name(&self, node: Node) -> Option<String> {
-        let node_type = node.kind(); 
+        let node_type = node.kind();
 
         if node_type == "type_spec" {
             if let Some(name_node) = node.child_by_field_name("name") {
@@ -1400,16 +1441,33 @@ mod tests {
         // Python call extraction uses tree-sitter `call` node (not `call_expression`),
         // so we verify noise filtering works at the is_noise_call level.
         let python_noise = vec![
-            "print", "range", "enumerate", "isinstance", "append", "join",
-            "split", "strip", "lower", "upper", "sorted", "reversed",
+            "print",
+            "range",
+            "enumerate",
+            "isinstance",
+            "append",
+            "join",
+            "split",
+            "strip",
+            "lower",
+            "upper",
+            "sorted",
+            "reversed",
         ];
         for name in &python_noise {
-            assert!(is_noise_call(name), "'{}' should be filtered as noise", name);
+            assert!(
+                is_noise_call(name),
+                "'{}' should be filtered as noise",
+                name
+            );
         }
 
         let python_legit = vec![
-            "process_data", "authenticate_user", "validate_input",
-            "calculate_total", "fetch_records",
+            "process_data",
+            "authenticate_user",
+            "validate_input",
+            "calculate_total",
+            "fetch_records",
         ];
         for name in &python_legit {
             assert!(!is_noise_call(name), "'{}' should NOT be filtered", name);
@@ -1451,7 +1509,8 @@ mod tests {
 
     #[test]
     fn test_extract_java_method() {
-        let source = b"public class Service { public String process(String input) { return input; } }";
+        let source =
+            b"public class Service { public String process(String input) { return input; } }";
         if let Some(tree) = parse_java(source) {
             let extractor = EntityExtractor::new(source, "Service.java", "java");
             let (elements, _) = extractor.extract(&tree);
@@ -1502,13 +1561,17 @@ mod tests {
                 .filter(|r| r.rel_type == "imports")
                 .collect();
             assert!(!imports.is_empty(), "Should extract Java import");
-            assert_eq!(imports[0].target_qualified, "com.example.service.UserService");
+            assert_eq!(
+                imports[0].target_qualified,
+                "com.example.service.UserService"
+            );
         }
     }
 
     #[test]
     fn test_extract_java_annotation() {
-        let source = b"public class Service { @Override public String toString() { return \"\"; } }";
+        let source =
+            b"public class Service { @Override public String toString() { return \"\"; } }";
         if let Some(tree) = parse_java(source) {
             let extractor = EntityExtractor::new(source, "Service.java", "java");
             let (elements, _) = extractor.extract(&tree);
@@ -1516,7 +1579,10 @@ mod tests {
                 .iter()
                 .filter(|e| e.element_type == "decorator")
                 .collect();
-            assert!(!decorators.is_empty(), "Should extract Java annotation as decorator");
+            assert!(
+                !decorators.is_empty(),
+                "Should extract Java annotation as decorator"
+            );
             assert_eq!(decorators[0].name, "Override");
         }
     }
@@ -1647,7 +1713,10 @@ mod tests {
                 .collect();
             assert_eq!(tested_by.len(), 1);
             assert_eq!(tested_by[0].source_qualified, "service/UserService.java");
-            assert_eq!(tested_by[0].target_qualified, "service/UserServiceTest.java");
+            assert_eq!(
+                tested_by[0].target_qualified,
+                "service/UserServiceTest.java"
+            );
         }
     }
 
@@ -1668,7 +1737,10 @@ class Container {
             let extractor = EntityExtractor::new(source, "UserService.kt", "kotlin");
             let (elements, _) = extractor.extract(&tree);
 
-            let class_elements: Vec<_> = elements.iter().filter(|e| e.element_type == "class").collect();
+            let class_elements: Vec<_> = elements
+                .iter()
+                .filter(|e| e.element_type == "class")
+                .collect();
             assert_eq!(class_elements.len(), 3); // UserService, DatabaseManager, Container
 
             assert!(class_elements.iter().any(|e| e.name == "UserService"));
@@ -1692,7 +1764,10 @@ class Account(val id: String) {
             let extractor = EntityExtractor::new(source, "Account.kt", "kotlin");
             let (elements, _) = extractor.extract(&tree);
 
-            let func_elements: Vec<_> = elements.iter().filter(|e| e.element_type == "function").collect();
+            let func_elements: Vec<_> = elements
+                .iter()
+                .filter(|e| e.element_type == "function")
+                .collect();
             assert_eq!(func_elements.len(), 3);
 
             assert!(func_elements.iter().any(|e| e.name == "calculateInterest"));
