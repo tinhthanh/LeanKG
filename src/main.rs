@@ -1305,36 +1305,41 @@ fn show_metrics(
     }
 
     println!("=== LeanKG Context Metrics ===\n");
+    let display_total = if summary.total_tokens_saved < 0 { 0 } else { summary.total_tokens_saved };
     println!(
         "Total Savings: {} tokens across {} calls",
-        summary.total_tokens_saved, summary.total_invocations
+        display_total, summary.total_invocations
     );
     println!(
         "Average Savings: {:.1}%",
-        summary.average_savings_percent
+        summary.average_savings_percent.max(0.0)
     );
     println!("Retention: {} days", summary.retention_days);
 
     if !summary.by_tool.is_empty() {
         println!("\nBy Tool:");
         for tm in &summary.by_tool {
-            println!(
-                "  {}: {} calls,  avg {:.0}% saved, {} tokens saved",
-                tm.tool_name,
-                tm.calls,
-                tm.avg_savings_percent,
-                tm.total_saved
-            );
+            if tm.total_saved > 0 {
+                println!(
+                    "  {}: {} calls,  avg {:.0}% saved, {} tokens saved",
+                    tm.tool_name,
+                    tm.calls,
+                    tm.avg_savings_percent.max(0.0),
+                    tm.total_saved
+                );
+            }
         }
     }
 
     if !summary.by_day.is_empty() {
         println!("\nBy Day:");
         for dm in &summary.by_day {
-            println!(
-                "  {}:  {} calls, {} tokens saved",
-                dm.date, dm.calls, dm.savings
-            );
+            if dm.savings > 0 {
+                println!(
+                    "  {}:  {} calls, {} tokens saved",
+                    dm.date, dm.calls, dm.savings
+                );
+            }
         }
     }
 
@@ -1359,6 +1364,9 @@ fn seed_test_metrics(db_path: &std::path::Path) -> Result<(), Box<dyn std::error
         ("seed3", "find_function", now - 80, 80i32, 28i32, 5i32, 12i32, 6000i32, 2400i32, 5972i32, 99.5f64, true),
         ("seed4", "search_code", now - 70, 120i32, 52i32, 15i32, 30i32, 14000i32, 5800i32, 13948i32, 99.6f64, true),
         ("seed5", "get_impact_radius", now - 60, 300i32, 180i32, 25i32, 45i32, 25000i32, 10000i32, 24820i32, 99.3f64, true),
+        // Negative savings - these should be filtered out
+        ("seed6", "get_clusters", now - 50, 100i32, 500i32, 5i32, 10i32, 300i32, 100i32, -200i32, -66.7f64, true),
+        ("seed7", "get_code_tree", now - 40, 200i32, 800i32, 10i32, 20i32, 500i32, 200i32, -300i32, -60.0f64, true),
     ];
     
     for (id, tool, ts, inp, out, elem, ms, base, lines, saved, pct, success) in &test_metrics {
