@@ -57,7 +57,10 @@ tree-sitter-php = "0.23"
 tree-sitter-xml = "0.7"
 tree-sitter-dart = "0.1"
 tree-sitter-swift = "0.7"
+reqwest = { version = "0.12", features = ["json"] }
+tempfile = "3"
+tar = "0.4"
+flate2 = "1"
 
 [dev-dependencies]
-tempfile = "3"
 
