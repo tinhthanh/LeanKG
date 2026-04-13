@@ -54,6 +54,8 @@ fn init_schema(db: &CozoDb) -> Result<(), Box<dyn std::error::Error>> {
         if let Err(e) = db.run_script(create_target_index, Default::default()) {
             tracing::debug!("target_qualified index may already exist: {:?}", e);
         }
+
+        validate_relationships_schema(db)?;
     }
 
     if !existing_relations.contains("business_logic") {
@@ -109,11 +111,9 @@ fn init_schema(db: &CozoDb) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn validate_code_elements_schema(db: &CozoDb) -> Result<(), Box<dyn std::error::Error>> {
-    // Get schema info for code_elements
     let schema_query = r#":schema code_elements"#;
     match db.run_script(schema_query, Default::default()) {
         Ok(result) => {
-            // Count the rows (each row is a column definition)
             let column_count = result.rows.len();
             const EXPECTED_COLUMNS: usize = 11;
             if column_count != EXPECTED_COLUMNS {
@@ -126,6 +126,27 @@ fn validate_code_elements_schema(db: &CozoDb) -> Result<(), Box<dyn std::error::
         }
         Err(e) => {
             tracing::debug!("Could not validate code_elements schema: {:?}", e);
+        }
+    }
+    Ok(())
+}
+
+fn validate_relationships_schema(db: &CozoDb) -> Result<(), Box<dyn std::error::Error>> {
+    let schema_query = r#":schema relationships"#;
+    match db.run_script(schema_query, Default::default()) {
+        Ok(result) => {
+            let column_count = result.rows.len();
+            const EXPECTED_COLUMNS: usize = 5;
+            if column_count != EXPECTED_COLUMNS {
+                eprintln!(
+                    "WARNING: relationships schema has {} columns, expected {}. \
+                     Schema may be from an older version. Consider re-indexing.",
+                    column_count, EXPECTED_COLUMNS
+                );
+            }
+        }
+        Err(e) => {
+            tracing::debug!("Could not validate relationships schema: {:?}", e);
         }
     }
     Ok(())
