@@ -1263,7 +1263,7 @@ impl GraphEngine {
         for row in unresolved_rows.iter() {
             let source = row[0].as_str().unwrap_or("").to_string();
             let target_qualified = row[1].as_str().unwrap_or("");
-            let meta_str = row[2].as_str().unwrap_or("{}");
+            let meta_str = row[4].as_str().unwrap_or("{}");
             
             let bare_name = target_qualified.trim_start_matches("__unresolved__").to_string();
 
