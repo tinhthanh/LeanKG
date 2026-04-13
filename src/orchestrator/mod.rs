@@ -133,14 +133,10 @@ impl QueryOrchestrator {
         let target_file = file.ok_or("File required for context query")?;
         let read_mode = self.resolve_mode(mode, target_file);
 
-        let elements = self
+        let file_elements = self
             .graph_engine
-            .all_elements()
+            .get_elements_by_file(target_file)
             .map_err(|e| e.to_string())?;
-        let file_elements: Vec<_> = elements
-            .iter()
-            .filter(|e| e.file_path.contains(target_file))
-            .collect();
 
         let result = self.read_file(target_file, read_mode)?;
 
@@ -160,15 +156,10 @@ impl QueryOrchestrator {
         mode: Option<&str>,
     ) -> Result<CachedContent, String> {
         let target_file = file.ok_or("File required for impact analysis")?;
-        let elements = self
+        let affected = self
             .graph_engine
-            .all_elements()
+            .get_elements_by_file(target_file)
             .map_err(|e| e.to_string())?;
-
-        let affected: Vec<_> = elements
-            .iter()
-            .filter(|e| e.file_path.contains(target_file))
-            .collect();
 
         let mut content = format!("# Impact Analysis for {}\n\n", target_file);
         content += &format!("Affected elements: {}\n\n", affected.len());
@@ -231,22 +222,13 @@ impl QueryOrchestrator {
     fn search_internal(&self, pattern: &str) -> Result<CachedContent, String> {
         let elements = self
             .graph_engine
-            .all_elements()
+            .search_by_pattern(pattern)
             .map_err(|e| e.to_string())?;
 
-        let pattern_lower = pattern.to_lowercase();
-        let matches: Vec<_> = elements
-            .iter()
-            .filter(|e| {
-                e.name.to_lowercase().contains(&pattern_lower)
-                    || e.qualified_name.to_lowercase().contains(&pattern_lower)
-            })
-            .collect();
-
         let mut content = format!("# Search Results for '{}'\n\n", pattern);
-        content += &format!("Total matches: {}\n\n", matches.len());
+        content += &format!("Total matches: {}\n\n", elements.len());
 
-        for elem in matches.iter().take(30) {
+        for elem in elements.iter().take(30) {
             content += &format!(
                 "- {} ({}): {} [L{}-{}]\n",
                 elem.qualified_name,
@@ -258,7 +240,7 @@ impl QueryOrchestrator {
         }
 
         let tokens = content.len() / 4;
-        let savings = if matches.len() > 10 { 75.0 } else { 0.0 };
+        let savings = if elements.len() > 10 { 75.0 } else { 0.0 };
 
         Ok(CachedContent {
             content,
@@ -266,34 +248,26 @@ impl QueryOrchestrator {
             tokens,
             total_tokens: tokens,
             savings_percent: savings,
-            elements_count: matches.len(),
+            elements_count: elements.len(),
         })
     }
 
     fn get_doc_internal(&self, file: Option<&str>) -> Result<CachedContent, String> {
         let target_file = file.ok_or("File required for doc query")?;
 
-        let elements = self
+        let file_elements = self
             .graph_engine
-            .all_elements()
-            .map_err(|e| e.to_string())?;
-        let relationships = self
-            .graph_engine
-            .all_relationships()
+            .get_elements_by_file(target_file)
             .map_err(|e| e.to_string())?;
 
-        let file_elements: Vec<_> = elements
-            .iter()
-            .filter(|e| e.file_path.contains(target_file))
-            .collect();
+        let relationships = self
+            .graph_engine
+            .get_relationships(target_file)
+            .map_err(|e| e.to_string())?;
 
         let docs: Vec<_> = relationships
             .iter()
-            .filter(|r| {
-                r.rel_type == "documented_by"
-                    && (r.source_qualified.contains(target_file)
-                        || r.target_qualified.contains(target_file))
-            })
+            .filter(|r| r.rel_type == "documented_by")
             .collect();
 
         let mut content = format!("# Documentation for {}\n\n", target_file);
