@@ -1,6 +1,6 @@
 [package]
 name = "leankg"
-version = "0.13.0"
+version = "0.14.0"
 edition = "2021"
 description = "Lightweight Knowledge Graph for AI-Assisted Development"
 license = "MIT"
@@ -37,6 +37,10 @@ uuid = { version = "1", features = ["v4", "serde"] }
 tower-http = { version = "0.6", features = ["cors", "fs"] }
 tree-sitter-kotlin-ng = "1.1.0"
 which = "7"
+reqwest = { version = "0.12", features = ["rustls-tls"], default-features = false }
+tar = "0.4"
+flate2 = "1"
+tempfile = "3"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 axum = "0.7"
@@ -53,5 +57,4 @@ tree-sitter-rust = "0.24"
 tree-sitter-java = "0.23"
 
 [dev-dependencies]
-tempfile = "3"
 

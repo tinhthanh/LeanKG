@@ -43,6 +43,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         cli::CLICommand::Version => {
             println!("leankg {}", env!("CARGO_PKG_VERSION"));
         }
+        cli::CLICommand::Update => {
+            update_leankg().await?;
+        }
         cli::CLICommand::Init { path } => {
             init_project(&path)?;
         }
@@ -1501,8 +1504,12 @@ fn show_metrics(
         summary.total_tokens_saved, summary.total_invocations
     );
     println!(
-        "Average Savings: {:.1}%",
+        "Average Savings: {:.1}% (positive only)",
         summary.average_savings_percent
+    );
+    println!(
+        "Average Correctness: {:.1}%",
+        summary.average_correctness_percent
     );
     println!("Retention: {} days", summary.retention_days);
 
@@ -1510,11 +1517,11 @@ fn show_metrics(
         println!("\nBy Tool:");
         for tm in &summary.by_tool {
             println!(
-                "  {}: {} calls,  avg {:.0}% saved, {} tokens saved",
+                "  {}: {} calls, {:.0}% save, {:.1}% correct",
                 tm.tool_name,
                 tm.calls,
                 tm.avg_savings_percent,
-                tm.total_saved
+                tm.avg_correctness_percent
             );
         }
     }
@@ -1523,8 +1530,8 @@ fn show_metrics(
         println!("\nBy Day:");
         for dm in &summary.by_day {
             println!(
-                "  {}:  {} calls, {} tokens saved",
-                dm.date, dm.calls, dm.savings
+                "  {}:  {} calls, {:.1}% correct",
+                dm.date, dm.calls, dm.correctness
             );
         }
     }
@@ -1837,6 +1844,168 @@ fn run_shell_command(command: &[String], compress: bool) -> Result<(), Box<dyn s
         Err(e) => {
             eprintln!("{}", e);
             std::process::exit(1);
+        }
+    }
+
+    Ok(())
+}
+
+async fn update_leankg() -> Result<(), Box<dyn std::error::Error>> {
+    println!("Checking for updates...");
+
+    let installed = get_installed_version()?;
+    let latest = get_latest_version().await?;
+
+    println!("Current: {}", installed);
+    println!("Latest:  {}", latest);
+
+    if installed == latest {
+        println!("\nYou already have the latest version ({}).", latest);
+        return Ok(());
+    }
+
+    println!("\nUpdating LeanKG...");
+
+    let platform = detect_platform();
+    let url = get_download_url(&platform, &latest);
+
+    println!("Downloading from {}...", url);
+
+    let tmp_dir = tempfile::tempdir()?;
+    let tar_path = tmp_dir.path().join("binary.tar.gz");
+
+    download_file(&url, &tar_path).await?;
+
+    extract_and_install(&tar_path).await?;
+
+    println!("\nSuccessfully updated to v{}", latest);
+    println!("Run 'leankg --version' to verify.");
+
+    Ok(())
+}
+
+fn get_installed_version() -> Result<String, Box<dyn std::error::Error>> {
+    let output = std::process::Command::new("leankg")
+        .arg("--version")
+        .output()?;
+
+    if !output.status.success() {
+        return Ok("not installed".to_string());
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let re = regex::Regex::new(r"(\d+\.\d+\.\d+)")?;
+    if let Some(caps) = re.captures(&stdout) {
+        Ok(caps.get(1).unwrap().as_str().to_string())
+    } else {
+        Ok("unknown".to_string())
+    }
+}
+
+async fn get_latest_version() -> Result<String, Box<dyn std::error::Error>> {
+    let client = reqwest::Client::new();
+    let resp = client
+        .get("https://api.github.com/repos/FreePeak/LeanKG/releases/latest")
+        .header("User-Agent", "LeanKG")
+        .header("Accept", "application/json")
+        .send()
+        .await?;
+
+    if !resp.status().is_success() {
+        return Err(format!("GitHub API returned status: {}", resp.status()).into());
+    }
+
+    let bytes = resp.bytes().await?;
+    let json: serde_json::Value = serde_json::from_slice(&bytes)?;
+
+    let tag = json["tag_name"]
+        .as_str()
+        .ok_or("Failed to parse tag_name")?
+        .trim_start_matches('v')
+        .to_string();
+
+    Ok(tag)
+}
+
+fn detect_platform() -> String {
+    let os = std::process::Command::new("uname")
+        .arg("-s")
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_default();
+
+    let arch = std::process::Command::new("uname")
+        .arg("-m")
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_default();
+
+    let platform = match os.as_str() {
+        "Darwin" => "macos",
+        "Linux" => "linux",
+        _ => {
+            eprintln!("Unsupported platform: {}", os);
+            std::process::exit(1);
+        }
+    };
+
+    let arch = match arch.as_str() {
+        "x86_64" => "x64",
+        "arm64" | "aarch64" => "arm64",
+        _ => {
+            eprintln!("Unsupported architecture: {}", arch);
+            std::process::exit(1);
+        }
+    };
+
+    format!("{}-{}", platform, arch)
+}
+
+fn get_download_url(platform: &str, version: &str) -> String {
+    format!(
+        "https://github.com/FreePeak/LeanKG/releases/download/v{}/leankg-{}.tar.gz",
+        version, platform
+    )
+}
+
+async fn download_file(url: &str, dest: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+    let resp = reqwest::get(url).await?;
+    let bytes = resp.bytes().await?;
+
+    std::fs::write(dest, bytes)?;
+    Ok(())
+}
+
+async fn extract_and_install(tar_path: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+    let tmp_dir = tempfile::tempdir()?;
+    let extract_dir = tmp_dir.path();
+
+    let tar_gz = std::fs::File::open(tar_path)?;
+    let mut ar = tar::Archive::new(flate2::read::GzDecoder::new(tar_gz));
+    ar.unpack(extract_dir)?;
+
+    let install_dir = std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".local/bin");
+    std::fs::create_dir_all(&install_dir)?;
+
+    let entries: Vec<_> = std::fs::read_dir(extract_dir)?
+        .filter_map(|e| e.ok())
+        .collect();
+
+    for entry in entries {
+        let path = entry.path();
+        if path.is_file() && path.file_name().map(|n| n == "leankg").unwrap_or(false) {
+            let dest = install_dir.join("leankg");
+            std::fs::copy(&path, &dest)?;
+
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let mut perms = std::fs::metadata(&path)?.permissions();
+                perms.set_mode(0o755);
+                std::fs::set_permissions(&dest, perms)?;
+            }
+
+            break;
         }
     }
 
