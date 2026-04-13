@@ -7,6 +7,7 @@ mod config;
 mod db;
 mod doc;
 mod doc_indexer;
+mod embed;
 mod graph;
 mod indexer;
 mod mcp;
@@ -94,35 +95,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let db_path = project_path.join(".leankg");
             tokio::fs::create_dir_all(&db_path).await.ok();
 
-            let ui_dist_exists = std::path::Path::new("ui/dist/index.html").exists();
-
             println!("╔═══════════════════════════════════════════════════════════════╗");
-            println!("║  LeanKG Web UI                                              ║");
+            println!("║  LeanKG Web UI (Embedded)                                   ║");
             println!("╚═══════════════════════════════════════════════════════════════╝");
             println!();
-
-            if ui_dist_exists {
-                println!("📦 Using pre-built UI from ui/dist");
-                println!();
-                println!("🚀 Starting backend server on http://localhost:{}", port);
-                println!();
-                web::start_server(port, db_path).await?;
-            } else {
-                let ui_port = 5173u16;
-                let mut vite_child = match spawn_vite_dev_server(ui_port).await {
-                    Ok(child) => child,
-                    Err(e) => {
-                        eprintln!("Failed to start Vite dev server: {}", e);
-                        return Err(e);
-                    }
-                };
-                println!();
-                println!("🚀 Starting backend server on http://localhost:{}", port);
-                println!();
-                let result = web::start_server(port, db_path).await;
-                vite_child.kill().await.ok();
-                result?;
-            }
+            println!("🚀 Starting server on http://localhost:{}", port);
+            println!();
+            web::start_server(port, db_path, None).await?;
         }
         cli::CLICommand::Web { port } => {
             let port = port.unwrap_or_else(|| {
@@ -135,35 +114,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let db_path = project_path.join(".leankg");
             tokio::fs::create_dir_all(&db_path).await.ok();
 
-            let ui_dist_exists = std::path::Path::new("ui/dist/index.html").exists();
-
             println!("╔═══════════════════════════════════════════════════════════════╗");
-            println!("║  LeanKG Web UI                                              ║");
+            println!("║  LeanKG Web UI (Embedded)                                   ║");
             println!("╚═══════════════════════════════════════════════════════════════╝");
             println!();
-
-            if ui_dist_exists {
-                println!("📦 Using pre-built UI from ui/dist");
-                println!();
-                println!("🚀 Starting backend server on http://localhost:{}", port);
-                println!();
-                web::start_server(port, db_path).await?;
-            } else {
-                let ui_port = 5173u16;
-                let mut vite_child = match spawn_vite_dev_server(ui_port).await {
-                    Ok(child) => child,
-                    Err(e) => {
-                        eprintln!("Failed to start Vite dev server: {}", e);
-                        return Err(e);
-                    }
-                };
-                println!();
-                println!("🚀 Starting backend server on http://localhost:{}", port);
-                println!();
-                let result = web::start_server(port, db_path).await;
-                vite_child.kill().await.ok();
-                result?;
-            }
+            println!("🚀 Starting server on http://localhost:{}", port);
+            println!();
+            web::start_server(port, db_path, None).await?;
         }
         cli::CLICommand::McpStdio { watch } => {
             let project_path = find_project_root()?;
@@ -1773,6 +1730,47 @@ fn export_mermaid(relationships: &[db::models::Relationship]) -> String {
         ));
     }
     mermaid
+}
+
+fn find_ui_dist_path() -> Option<std::path::PathBuf> {
+    // 1. Check LEANKG_UI_DIST environment variable first
+    if let Ok(env_path) = std::env::var("LEANKG_UI_DIST") {
+        let path = std::path::Path::new(&env_path);
+        if path.join("index.html").exists() {
+            println!("📦 Using UI from LEANKG_UI_DIST: {}", env_path);
+            return Some(path.to_path_buf());
+        }
+    }
+
+    // 2. Check ui/dist relative to current working directory
+    let cwd_ui = std::path::Path::new("ui/dist");
+    if cwd_ui.join("index.html").exists() {
+        println!("📦 Using UI from current directory: {}", cwd_ui.display());
+        return Some(cwd_ui.to_path_buf());
+    }
+
+    // 3. Check ui/dist relative to the executable's directory
+    // This handles binary installations like /usr/local/bin/leankg
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            // Try ../share/leankg/ui/dist (common Linux installation)
+            let share_ui = exe_dir.join("../share/leankg/ui/dist");
+            if share_ui.join("index.html").exists() {
+                let path = share_ui.canonicalize().ok().unwrap_or(share_ui);
+                println!("📦 Using UI from share directory: {}", path.display());
+                return Some(path);
+            }
+            // Try exe_dir/ui/dist (development and macOS brew)
+            let exe_ui = exe_dir.join("ui/dist");
+            if exe_ui.join("index.html").exists() {
+                let path = exe_ui.canonicalize().ok().unwrap_or(exe_ui);
+                println!("📦 Using UI from executable directory: {}", path.display());
+                return Some(path);
+            }
+        }
+    }
+
+    None
 }
 
 async fn spawn_vite_dev_server(port: u16) -> Result<tokio::process::Child, Box<dyn std::error::Error>> {

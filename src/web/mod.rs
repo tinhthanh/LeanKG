@@ -2,18 +2,20 @@
 pub mod handlers;
 
 use axum::{
-    http::StatusCode,
+    body::Body,
+    extract::State,
+    http::{StatusCode, header},
     response::{IntoResponse, Response},
     routing::{get, post, put},
     Json, Router,
 };
-use tower_http::services::{ServeDir, ServeFile};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::db::schema::{init_db, CozoDb};
 use crate::graph::GraphEngine;
+use crate::embed;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -174,22 +176,81 @@ impl<T: serde::Serialize> IntoResponse for ApiResponse<T> {
     }
 }
 
+fn content_type_for_path(path: &str) -> &'static str {
+    if path.ends_with(".html") {
+        "text/html"
+    } else if path.ends_with(".js") {
+        "application/javascript"
+    } else if path.ends_with(".css") {
+        "text/css"
+    } else if path.ends_with(".json") {
+        "application/json"
+    } else if path.ends_with(".png") {
+        "image/png"
+    } else if path.ends_with(".jpg") || path.ends_with(".jpeg") {
+        "image/jpeg"
+    } else if path.ends_with(".svg") {
+        "image/svg+xml"
+    } else if path.ends_with(".ico") {
+        "image/x-icon"
+    } else {
+        "application/octet-stream"
+    }
+}
+
+async fn serve_embedded_file(path: &str) -> Response {
+    let path = path.trim_start_matches('/');
+    let file_path = if path.is_empty() || path == "/" {
+        "index.html"
+    } else {
+        path
+    };
+
+    if let Some(data) = embed::get(file_path) {
+        let ct = content_type_for_path(file_path);
+        Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, ct)
+            .body(Body::from(data.to_vec()))
+            .unwrap_or_else(|_| internal_error())
+    } else {
+        Response::builder()
+            .status(StatusCode::NOT_FOUND)
+            .header(header::CONTENT_TYPE, "text/html")
+            .body(Body::from(embed::get_404().to_vec()))
+            .unwrap_or_else(|_| internal_error())
+    }
+}
+
+fn internal_error() -> Response {
+    Response::builder()
+        .status(StatusCode::INTERNAL_SERVER_ERROR)
+        .body(Body::from(b"Internal Server Error".to_vec()))
+        .unwrap()
+}
+
+async fn fallback_handler(path: axum::extract::Path<String>) -> Response {
+    serve_embedded_file(&path.0).await
+}
+
+async fn root_handler() -> Response {
+    serve_embedded_file("index.html").await
+}
+
 pub async fn start_server(
     port: u16,
     db_path: std::path::PathBuf,
+    _ui_dist_path: Option<std::path::PathBuf>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // db_path points to .leankg directory; project root is its parent
     let project_root = db_path.parent()
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|| db_path.clone());
-    let state = AppState::new(db_path, project_root).await?;
+    let state = AppState::new(db_path.clone(), project_root.clone()).await?;
     state.init_db().await?;
 
-    let serve_dir = ServeDir::new("ui/dist")
-        .not_found_service(ServeFile::new("ui/dist/index.html"));
-
     let app = Router::new()
-        .fallback_service(serve_dir)
+        .route("/", get(root_handler))
+        .route("/*path", get(fallback_handler))
         .route("/api/elements", get(handlers::api_elements))
         .route("/api/relationships", get(handlers::api_relationships))
         .route("/api/annotations", get(handlers::api_annotations))
