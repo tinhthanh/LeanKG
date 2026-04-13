@@ -35,34 +35,98 @@ pub fn find_files_sync(root: &str) -> Result<Vec<String>, Box<dyn std::error::Er
         .filter_map(|e| e.ok())
     {
         let path = entry.path();
+
+        // ── Fast-path: skip ignored directories entirely ──
+        let path_str = path.to_string_lossy();
+        if should_ignore_path(&path_str) {
+            continue;
+        }
+
         let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
         let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-        
+
         let is_valid_file = if config_files.contains(&file_name) {
             true
         } else {
             extensions.contains(&ext) || is_cicd_yaml_file(path)
         };
 
-        if path.is_file()
-            && is_valid_file
-            && !path.to_string_lossy().contains("node_modules")
-            && !path.to_string_lossy().contains("vendor")
-            && !path.to_string_lossy().contains(".git")
-            && !path.to_string_lossy().contains("/target/")
-            && !path.to_string_lossy().contains("/dist/")
-            && !path.to_string_lossy().contains("/.next/")
-            && !path.to_string_lossy().contains("/build/")
-            && !path.to_string_lossy().contains("/out/")
-            && !path.to_string_lossy().contains("/ Coverage/")
-            && !path.to_string_lossy().contains("/.svelte-kit/")
-            && !path.to_string_lossy().contains("/.nuxt/")
-        {
-            files.push(path.to_string_lossy().to_string());
+        if path.is_file() && is_valid_file {
+            files.push(path_str.to_string());
         }
     }
 
     Ok(files)
+}
+
+/// Returns true if the path should be skipped during indexing.
+/// Covers build outputs, dependency caches, VCS, and generated dirs for all languages.
+fn should_ignore_path(path: &str) -> bool {
+    let path_lower = path.to_ascii_lowercase();
+
+    path.contains("/.git/")
+        || path.contains("/.gitignore")
+        || path.contains("/.worktrees/")
+        || path.contains("/.cursor/")
+        || path.contains("/.vscode/")
+        || path.contains("/.idea/")
+        || path.contains("/.vs/")
+        || path.contains("/.DS_Store")
+        // Rust
+        || path.contains("/target/")
+        // JavaScript/TypeScript
+        || path.contains("/node_modules/")
+        || path.contains("/dist/")
+        || path.contains("/build/")
+        || path.contains("/.next/")
+        || path.contains("/.nuxt/")
+        || path.contains("/.svelte-kit/")
+        || path.contains("/.cache/")
+        || path.contains("/.parcel-cache/")
+        || path.contains("/.turbo/")
+        // Python
+        || path.contains("/__pycache__/")
+        || path.contains("/.pytest_cache/")
+        || path.contains("/.mypy_cache/")
+        || path.contains("/.ruff_cache/")
+        || path.contains("/venv/")
+        || path.contains("/env/")
+        || path.contains("/.venv/")
+        || path.contains("/.env/")
+        || path.contains("/.eggs/")
+        || path.contains("/.hatch/")
+        // Go
+        || path.contains("/vendor/")
+        || path.contains("/bin/")
+        // Java/Kotlin
+        || path.contains("/out/")
+        || path.contains("/.gradle/")
+        || path.contains("/gradle/")
+        // Ruby
+        || path.contains("/.bundle/")
+        // .NET/C#
+        || path.contains("/bin/")
+        || path.contains("/obj/")
+        // Terraform & IaC
+        || path.contains("/.terraform/")
+        // Coverage
+        || path.contains("/coverage/")
+        || path.contains("/.coverage/")
+        || path.contains("/htmlcov/")
+        // Python packages
+        || path_lower.contains(".egg-info")
+        // Rust cargo
+        || path_lower.contains("/cargo_registry/")
+        || path_lower.contains("/.cargo/")
+        // Haskell
+        || path.contains("/dist-newstyle/")
+        // Elixir
+        || path.contains("/_build/")
+        || path.contains("/deps/")
+        // Common temp files
+        || path.contains("/.tmp/")
+        || path.contains("/temp/")
+        || path.contains("/tmp/")
 }
 
 fn is_cicd_yaml_file(path: &std::path::Path) -> bool {
