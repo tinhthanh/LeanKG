@@ -377,12 +377,7 @@ impl ToolHandler {
         let mode = args["mode"].as_str();
         let fresh = args["fresh"].as_bool().unwrap_or(false);
 
-        let result = self.orchestrator.orchestrate(
-            intent,
-            file,
-            mode,
-            fresh,
-        )?;
+        let result = self.orchestrator.orchestrate(intent, file, mode, fresh)?;
 
         Ok(json!({
             "intent": result.intent,
