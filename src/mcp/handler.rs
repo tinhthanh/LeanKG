@@ -1537,8 +1537,14 @@ impl ToolHandler {
 
     fn run_raw_query(&self, args: &Value) -> Result<Value, String> {
         let query = args["query"].as_str().ok_or("Missing 'query' parameter")?;
-        
-        let result = self.graph_engine.run_raw_query(query).map_err(|e| e.to_string())?;
+
+        let params: std::collections::BTreeMap<String, serde_json::Value> = args
+            .get("params")
+            .and_then(|p| p.as_object())
+            .map(|obj| obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+            .unwrap_or_default();
+
+        let result = self.graph_engine.run_raw_query(query, params).map_err(|e| e.to_string())?;
 
         let value = serde_json::to_value(&result)
             .map_err(|e| format!("Failed to serialize result: {}", e))?;

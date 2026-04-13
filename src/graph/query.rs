@@ -285,8 +285,9 @@ impl GraphEngine {
     pub fn run_raw_query(
         &self,
         query: &str,
+        params: std::collections::BTreeMap<String, serde_json::Value>,
     ) -> Result<cozo::NamedRows, Box<dyn std::error::Error + Send + Sync>> {
-        self.db.run_script(query, Default::default()).map_err(|e| {
+        self.db.run_script(query, params).map_err(|e| {
             let msg = e.to_string();
             Box::new(std::io::Error::new(std::io::ErrorKind::Other, msg)) as Box<dyn std::error::Error + Send + Sync>
         })
@@ -418,13 +419,13 @@ impl GraphEngine {
         &self,
         query_str: &str,
     ) -> Result<Vec<BusinessLogic>, Box<dyn std::error::Error>> {
-        let pattern = format!("(?i){}", query_str);
-        
-        let query = r#"?[element_qualified, description, user_story_id, feature_id] := *business_logic[element_qualified, description, user_story_id, feature_id], regex_matches(description, $pat)"#;
-        let mut params = std::collections::BTreeMap::new();
-        params.insert("pat".to_string(), serde_json::Value::String(pattern));
+        let safe_pattern = escape_datalog(&query_str.to_lowercase());
+        let query = format!(
+            r#"?[element_qualified, description, user_story_id, feature_id] := *business_logic[element_qualified, description, user_story_id, feature_id], regex_matches(lowercase(description), ".*{safe_pattern}.*")"#,
+            safe_pattern = safe_pattern
+        );
 
-        let result = self.db.run_script(query, params)?;
+        let result = self.db.run_script(&query, std::collections::BTreeMap::new())?;
         let rows = result.rows;
 
         let annotations: Vec<BusinessLogic> = rows
@@ -822,13 +823,13 @@ impl GraphEngine {
         &self,
         name: &str,
     ) -> Result<Vec<CodeElement>, Box<dyn std::error::Error>> {
-        let pattern = format!("(?i){}", name);
-        
-        let query = r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata], regex_matches(name, $pat)"#;
-        let mut params = std::collections::BTreeMap::new();
-        params.insert("pat".to_string(), serde_json::Value::String(pattern));
+        let safe_name = escape_datalog(&name.to_lowercase());
+        let query = format!(
+            r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata], regex_matches(lowercase(name), ".*{safe_name}.*")"#,
+            safe_name = safe_name
+        );
 
-        let result = self.db.run_script(query, params)?;
+        let result = self.db.run_script(&query, std::collections::BTreeMap::new())?;
         let rows = result.rows;
 
         let elements: Vec<CodeElement> = rows
@@ -1334,5 +1335,98 @@ impl GraphEngine {
         let query = format!(":rm relationships[source_qualified, target_qualified, rel_type, confidence, metadata] := source_qualified = \"{}\", target_qualified = \"{}\"", safe_source, safe_target);
         self.db.run_script(&query, Default::default())?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::schema::init_db;
+    use crate::db::models::CodeElement;
+    use tempfile::TempDir;
+
+    fn make_test_engine() -> (GraphEngine, TempDir) {
+        let tmp = TempDir::new().unwrap();
+        let db_path = tmp.path().join("test.db");
+        let db = init_db(&db_path).unwrap();
+        let engine = GraphEngine::new(db);
+        (engine, tmp)
+    }
+
+    fn insert_test_element(engine: &GraphEngine, name: &str, element_type: &str) {
+        let elem = CodeElement {
+            qualified_name: format!("src/test.rs::{}", name),
+            element_type: element_type.to_string(),
+            name: name.to_string(),
+            file_path: "src/test.rs".to_string(),
+            line_start: 1,
+            line_end: 10,
+            language: "rust".to_string(),
+            ..Default::default()
+        };
+        engine.insert_element(&elem).unwrap();
+    }
+
+    #[test]
+    fn test_search_by_name_finds_exact_match() {
+        let (engine, _tmp) = make_test_engine();
+        insert_test_element(&engine, "my_function", "function");
+
+        let results = engine.search_by_name("my_function").unwrap();
+        assert!(!results.is_empty(), "search_by_name should find elements by exact name");
+        assert_eq!(results[0].name, "my_function");
+    }
+
+    #[test]
+    fn test_search_by_name_case_insensitive() {
+        let (engine, _tmp) = make_test_engine();
+        insert_test_element(&engine, "MyFunction", "function");
+
+        let results = engine.search_by_name("myfunction").unwrap();
+        assert!(!results.is_empty(), "search_by_name should be case-insensitive");
+    }
+
+    #[test]
+    fn test_search_by_name_partial_match() {
+        let (engine, _tmp) = make_test_engine();
+        insert_test_element(&engine, "calculate_total", "function");
+
+        let results = engine.search_by_name("calculate").unwrap();
+        assert!(!results.is_empty(), "search_by_name should find partial matches");
+    }
+
+    #[test]
+    fn test_search_by_name_no_match_returns_empty() {
+        let (engine, _tmp) = make_test_engine();
+        insert_test_element(&engine, "existing_function", "function");
+
+        let results = engine.search_by_name("nonexistent_xyz_abc").unwrap();
+        assert!(results.is_empty(), "search_by_name should return empty for no match");
+    }
+
+    #[test]
+    fn test_run_raw_query_with_empty_params() {
+        let (engine, _tmp) = make_test_engine();
+        insert_test_element(&engine, "main", "function");
+
+        let query = r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata]"#;
+        let result = engine.run_raw_query(query, Default::default());
+        assert!(result.is_ok(), "run_raw_query should succeed with valid query");
+        let rows = result.unwrap().rows;
+        assert!(!rows.is_empty(), "run_raw_query should return inserted elements");
+    }
+
+    #[test]
+    fn test_run_raw_query_with_params() {
+        let (engine, _tmp) = make_test_engine();
+        insert_test_element(&engine, "main", "function");
+
+        let query = r#"?[qualified_name, name] := *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata], name = $nm"#;
+        let mut params = std::collections::BTreeMap::new();
+        params.insert("nm".to_string(), serde_json::Value::String("main".to_string()));
+        let result = engine.run_raw_query(query, params);
+        assert!(result.is_ok(), "run_raw_query should succeed with parameterized query");
+        let rows = result.unwrap().rows;
+        assert!(!rows.is_empty(), "run_raw_query with params should find element named 'main'");
     }
 }

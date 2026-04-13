@@ -14,6 +14,8 @@ use super::{ApiResponse, AppState};
 #[derive(Deserialize, Serialize)]
 pub struct QueryRequest {
     pub query: String,
+    #[serde(default)]
+    pub params: std::collections::BTreeMap<String, serde_json::Value>,
 }
 
 #[derive(Serialize)]
@@ -1724,7 +1726,7 @@ pub async fn api_query(
     Json(req): Json<QueryRequest>,
 ) -> impl IntoResponse {
     match state.get_graph_engine().await {
-        Ok(engine) => match engine.run_raw_query(&req.query) {
+        Ok(engine) => match engine.run_raw_query(&req.query, req.params.clone()) {
             Ok(res) => {
                 let val = serde_json::to_value(&res).unwrap_or(serde_json::json!({}));
                 ApiResponse {
