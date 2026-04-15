@@ -1,47 +1,94 @@
 use super::entropy::EntropyAnalyzer;
 use super::modes::{parse_lines_spec, LinesRange, ReadMode};
-use std::collections::HashSet;
+use super::session_cache::SessionCache;
+use parking_lot::RwLock;
 use std::fs;
 use std::path::Path;
+use std::sync::Arc;
 
 pub struct FileReader {
     entropy_analyzer: EntropyAnalyzer,
-    cache: HashSet<String>,
+    session_cache: Arc<RwLock<SessionCache>>,
 }
 
 impl FileReader {
-    pub fn new() -> Self {
+    pub fn new(session_cache: Arc<RwLock<SessionCache>>) -> Self {
         Self {
             entropy_analyzer: EntropyAnalyzer::default(),
-            cache: HashSet::new(),
+            session_cache,
         }
     }
+}
 
+impl Default for FileReader {
+    fn default() -> Self {
+        Self::new(Arc::new(RwLock::new(SessionCache::new())))
+    }
+}
+
+impl FileReader {
     pub fn read(
         &mut self,
         path: &str,
         mode: ReadMode,
         lines_spec: Option<&str>,
+        fresh: bool,
     ) -> Result<ReadResult, String> {
-        let content =
-            fs::read_to_string(path).map_err(|e| format!("Failed to read file {}: {}", path, e))?;
+        let content = match fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(e) => {
+                if let std::io::ErrorKind::NotFound = e.kind() {
+                    self.session_cache.write().invalidate(path);
+                }
+                return Err(format!("Failed to read file {}: {}", path, e));
+            }
+        };
+
+        let total_tokens = super::estimate_tokens(&content);
+        
+        let (entry, is_hit, old_content, file_ref) = {
+            let mut cache = self.session_cache.write();
+            let (entry, hit, old) = cache.store(path, content.clone());
+            let r = cache.get_file_ref(path);
+            (entry, hit, old, r)
+        };
+
+        // Cache Return Pre-emption
+        if is_hit && !fresh && mode != ReadMode::Diff && mode != ReadMode::Lines {
+            let short_name = Path::new(path).file_name().unwrap_or_default().to_string_lossy();
+            let msg = format!(
+                "{}={} cached {}t {}L\n[File unchanged in SessionCache. Use fresh=true to pull absolute text]",
+                file_ref, short_name, entry.read_count, entry.line_count
+            );
+            return Ok(ReadResult {
+                path: path.to_string(),
+                mode,
+                content: msg.clone(),
+                tokens: super::estimate_tokens(&msg),
+                total_tokens: entry.original_tokens,
+                savings_percent: 99.0, // Cache hits are roughly 99% efficient
+                total_lines: entry.line_count,
+                output_lines: 2,
+                is_cached: true,
+                lines_included: None,
+            });
+        }
 
         let lines: Vec<&str> = content.lines().collect();
         let total_lines = lines.len();
-        let total_tokens = self.estimate_tokens(&content);
-        let hash = self.compute_hash(&content);
-
-        let is_cached = self.cache.contains(&hash);
-        self.cache.insert(hash);
 
         let result = match mode {
             ReadMode::Adaptive => {
                 return Err("Adaptive mode should be resolved before calling read()".into());
             }
-            ReadMode::Full => self.read_full(&content, &lines),
+            ReadMode::Full => self.read_full(path, &content),
             ReadMode::Map => self.read_map(path, &content, &lines)?,
             ReadMode::Signatures => self.read_signatures(path, &content, &lines)?,
-            ReadMode::Diff => self.read_diff(&content, &lines),
+            ReadMode::Diff => {
+                let diff_res = self.read_diff(path, &file_ref, &content, old_content.as_deref());
+                // Override tokens tracking on read_diff
+                return Ok(diff_res);
+            },
             ReadMode::Aggressive => self.read_aggressive(&content, &lines),
             ReadMode::Entropy => self.read_entropy(&content, &lines),
             ReadMode::Lines => {
@@ -67,23 +114,47 @@ impl FileReader {
             savings_percent,
             total_lines,
             output_lines,
-            is_cached,
+            is_cached: is_hit,
             lines_included: result.lines_included,
         })
     }
 
-    fn read_full(&self, _content: &str, lines: &[&str]) -> ReadResult {
+    fn read_full(&self, path: &str, content: &str) -> ReadResult {
+        let ext = Path::new(path).extension().unwrap_or_default().to_string_lossy();
+        
+        let mut final_content = content.to_string();
+        
+        let mut sym_map = super::symbol_map::SymbolMap::new(content);
+        let idents = super::symbol_map::extract_identifiers(content, &ext);
+        for ident in &idents {
+            sym_map.register(ident);
+        }
+        
+        if sym_map.len() >= 3 {
+             let table = sym_map.format_table();
+             let compressed = sym_map.apply(content);
+             let orig_tokens = super::estimate_tokens(content);
+             let new_tokens = super::estimate_tokens(&compressed) + super::estimate_tokens(&table);
+             let net_savings = orig_tokens.saturating_sub(new_tokens);
+             
+             if orig_tokens > 0 && net_savings * 100 / orig_tokens >= 5 {
+                 final_content = format!("{}{}", compressed, table);
+             }
+        }
+        
+        let total_lines = content.lines().count();
+
         ReadResult {
-            path: String::new(),
+            path: path.to_string(),
             mode: ReadMode::Full,
-            content: lines.join("\n"),
+            content: final_content.clone(),
             tokens: 0,
             total_tokens: 0,
             savings_percent: 0.0,
-            total_lines: lines.len(),
-            output_lines: lines.len(),
+            total_lines,
+            output_lines: final_content.lines().count(),
             is_cached: false,
-            lines_included: Some(lines.len()),
+            lines_included: Some(total_lines),
         }
     }
 
@@ -215,18 +286,71 @@ impl FileReader {
         })
     }
 
-    fn read_diff(&self, _content: &str, lines: &[&str]) -> ReadResult {
+    fn read_diff(&self, path: &str, file_ref: &str, current_content: &str, old_content: Option<&str>) -> ReadResult {
+        let short_name = Path::new(path).file_name().unwrap_or_default().to_string_lossy();
+        
+        let lines: Vec<&str> = current_content.lines().collect();
+        let total_lines = lines.len();
+
+        let old = match old_content {
+            Some(o) => o,
+            None => {
+                // If it's the very first time being read, we can't emit a diff. We fall back to outputting the full file.
+                return ReadResult {
+                    path: path.to_string(),
+                    mode: ReadMode::Diff,
+                    content: format!("{}={} [New in Cache => Showing Full {}L]\n{}", file_ref, short_name, total_lines, current_content),
+                    tokens: super::estimate_tokens(current_content),
+                    total_tokens: super::estimate_tokens(current_content),
+                    savings_percent: 0.0,
+                    total_lines,
+                    output_lines: total_lines,
+                    is_cached: false,
+                    lines_included: Some(total_lines),
+                };
+            }
+        };
+
+        if old == current_content {
+            let msg = format!("{}={} [No changes since last read]", file_ref, short_name);
+            return ReadResult {
+                path: path.to_string(),
+                mode: ReadMode::Diff,
+                content: msg.clone(),
+                tokens: super::estimate_tokens(&msg),
+                total_tokens: super::estimate_tokens(current_content),
+                savings_percent: 99.0,
+                total_lines,
+                output_lines: 1,
+                is_cached: true,
+                lines_included: None,
+            };
+        }
+
+        let diff = similar::TextDiff::from_lines(old, current_content);
+        let unified = diff.unified_diff().context_radius(3).to_string();
+        let msg = format!("{}={} [auto-delta] ∆{}L\n{}", file_ref, short_name, total_lines, unified);
+
+        let output_lines = unified.lines().count();
+        let tokens = super::estimate_tokens(&msg);
+        let total_tokens = super::estimate_tokens(current_content);
+        let savings_percent = if total_tokens > 0 && tokens <= total_tokens {
+            (total_tokens - tokens) as f64 / total_tokens as f64 * 100.0
+        } else {
+            0.0
+        };
+
         ReadResult {
-            path: String::new(),
+            path: path.to_string(),
             mode: ReadMode::Diff,
-            content: lines[..lines.len().min(50)].join("\n"),
-            tokens: 0,
-            total_tokens: 0,
-            savings_percent: 0.0,
-            total_lines: lines.len(),
-            output_lines: lines.len().min(50),
+            content: msg,
+            tokens,
+            total_tokens,
+            savings_percent,
+            total_lines,
+            output_lines,
             is_cached: false,
-            lines_included: Some(lines.len().min(50)),
+            lines_included: None,
         }
     }
 
@@ -304,12 +428,6 @@ impl FileReader {
         let mut hasher = DefaultHasher::new();
         content.hash(&mut hasher);
         format!("{:x}", hasher.finish())
-    }
-}
-
-impl Default for FileReader {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
