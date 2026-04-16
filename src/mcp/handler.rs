@@ -514,6 +514,20 @@ impl ToolHandler {
                         ("ts", "typescript"),
                         ("js", "javascript"),
                         ("py", "python"),
+                        ("java", "java"),
+                        ("kt", "kotlin"),
+                        ("kts", "kotlin"),
+                        ("sh", "bash"),
+                        ("bash", "bash"),
+                        ("zsh", "bash"),
+                        ("rb", "ruby"),
+                        ("php", "php"),
+                        ("pl", "perl"),
+                        ("pm", "perl"),
+                        ("r", "r"),
+                        ("R", "r"),
+                        ("ex", "elixir"),
+                        ("exs", "elixir"),
                     ]
                     .iter()
                     .cloned()

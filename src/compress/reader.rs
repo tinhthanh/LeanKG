@@ -1,6 +1,8 @@
 use super::entropy::EntropyAnalyzer;
+use super::litm::reorder_for_lcurve;
 use super::modes::{parse_lines_spec, LinesRange, ReadMode};
 use super::session_cache::SessionCache;
+use super::signatures::extract_signatures;
 use parking_lot::RwLock;
 use std::fs;
 use std::path::Path;
@@ -161,52 +163,23 @@ impl FileReader {
     fn read_map(
         &mut self,
         path: &str,
-        _content: &str,
+        content: &str,
         lines: &[&str],
     ) -> Result<ReadResult, String> {
         let mut result_lines = Vec::new();
         let mut imports = Vec::new();
         let mut exports = Vec::new();
-        let mut signatures = Vec::new();
-        let mut current_function = String::new();
-        let mut in_function = false;
-        let mut brace_count = 0;
-
+        
+        // Scan basic imports matching
         for (i, line) in lines.iter().enumerate() {
             let trimmed = line.trim();
-
             if is_import_line(trimmed) {
                 imports.push(format!("L{}: {}", i + 1, trimmed));
             }
-
             if is_export_line(trimmed) {
                 exports.push(format!("L{}: {}", i + 1, trimmed));
             }
-
-            if is_function_signature(trimmed) {
-                if in_function && !current_function.is_empty() {
-                    signatures.push(current_function);
-                }
-                current_function = format!("L{}: {}", i + 1, trimmed);
-                in_function = true;
-                brace_count = count_braces(trimmed);
-            } else if in_function {
-                brace_count += count_braces(trimmed);
-                if brace_count <= 0 {
-                    signatures.push(current_function.clone());
-                    current_function.clear();
-                    in_function = false;
-                } else {
-                    current_function.push_str(&format!("\n  {}", trimmed));
-                }
-            }
         }
-
-        if !current_function.is_empty() {
-            signatures.push(current_function);
-        }
-
-        let signatures_count = signatures.len();
 
         result_lines.push(format!(
             "# {} [{}L]",
@@ -226,63 +199,69 @@ impl FileReader {
             result_lines.push(format!("exports: {}", exports.join(", ")));
         }
 
+        // Apply strict signature mapping rules instead of braces math
+        let ext = Path::new(path).extension().unwrap_or_default().to_string_lossy();
+        let sigs = extract_signatures(content, &ext);
+        
         result_lines.push(String::new());
         result_lines.push("API:".to_string());
-
-        for sig in signatures {
-            result_lines.push(format!("  {}", sig));
+        for sig in &sigs {
+            result_lines.push(format!("  {}", sig.to_compact()));
         }
+
+        // Output formatting: We run L-curve optimization purely on exports payload when required
+        let map_output = result_lines.join("\n");
+        let map_optimal = reorder_for_lcurve(&map_output, &[]);
 
         Ok(ReadResult {
             path: path.to_string(),
             mode: ReadMode::Map,
-            content: result_lines.join("\n"),
+            content: map_optimal,
             tokens: 0,
             total_tokens: 0,
             savings_percent: 0.0,
             total_lines: lines.len(),
             output_lines: result_lines.len(),
             is_cached: false,
-            lines_included: Some(signatures_count),
+            lines_included: Some(sigs.len()),
         })
     }
 
     fn read_signatures(
         &mut self,
         path: &str,
-        _content: &str,
+        content: &str,
         lines: &[&str],
     ) -> Result<ReadResult, String> {
-        let mut signatures = Vec::new();
+        let ext = Path::new(path).extension().unwrap_or_default().to_string_lossy();
+        let sigs = extract_signatures(content, &ext);
 
-        for (i, line) in lines.iter().enumerate() {
-            let trimmed = line.trim();
-            if is_function_signature(trimmed) {
-                signatures.push(format!("L{}: {}", i + 1, trimmed));
-            }
-        }
-
-        let result = format!(
+        let mut out = Vec::new();
+        out.push(format!(
             "{} [{}L]\nsignatures: {}\n",
             Path::new(path)
                 .file_name()
                 .unwrap_or_default()
                 .to_string_lossy(),
             lines.len(),
-            signatures.len()
-        );
+            sigs.len()
+        ));
+        
+        for sig in &sigs {
+            out.push(sig.to_tdd());
+        }
 
         Ok(ReadResult {
             path: path.to_string(),
             mode: ReadMode::Signatures,
-            content: result,
+            content: out.join("\n"),
             tokens: 0,
             total_tokens: 0,
             savings_percent: 0.0,
             total_lines: lines.len(),
-            output_lines: signatures.len(),
+            output_lines: out.len(),
             is_cached: false,
-            lines_included: Some(signatures.len()),
+            lines_included: Some(sigs.len()),
         })
     }
 
@@ -422,13 +401,7 @@ impl FileReader {
         text.len() / 4
     }
 
-    fn compute_hash(&self, content: &str) -> String {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-        let mut hasher = DefaultHasher::new();
-        content.hash(&mut hasher);
-        format!("{:x}", hasher.finish())
-    }
+
 }
 
 pub struct ReadResult {
@@ -461,36 +434,7 @@ fn is_export_line(line: &str) -> bool {
     line.starts_with("pub ") || line.starts_with("export ") || line.starts_with("module.exports")
 }
 
-fn is_function_signature(line: &str) -> bool {
-    let markers = [
-        "fn ",
-        "func ",
-        "function ",
-        "def ",
-        "async fn",
-        "pub fn",
-        "pub async fn",
-        "impl ",
-        "struct ",
-        "enum ",
-        "trait ",
-    ];
-    let trimmed = line.trim();
-    (markers.iter().any(|p| trimmed.starts_with(p)) && trimmed.contains('('))
-        || trimmed.starts_with("class ")
-}
 
-fn count_braces(line: &str) -> i32 {
-    let mut count = 0i32;
-    for c in line.chars() {
-        match c {
-            '{' => count += 1,
-            '}' => count -= 1,
-            _ => {}
-        }
-    }
-    count
-}
 
 fn is_noise_line(line: &str) -> bool {
     let noise = [
@@ -543,10 +487,42 @@ mod tests {
     }
 
     #[test]
-    fn test_is_function_signature() {
-        assert!(is_function_signature("fn foo() {"));
-        assert!(is_function_signature("pub async fn bar() -> Result"));
-        assert!(is_function_signature("function test(x: number)"));
-        assert!(!is_function_signature("let x = foo();"));
+    fn test_read_signatures() {
+        let mut reader = FileReader::default();
+        let content = "pub fn execute() {}\nfn helper() {}\npub struct Point { x: i32 }";
+        let lines: Vec<&str> = content.lines().collect();
+        let result = reader.read_signatures("test.rs", content, &lines).unwrap();
+        
+        assert_eq!(result.mode, ReadMode::Signatures);
+        assert_eq!(result.total_lines, 3);
+        assert_eq!(result.lines_included, Some(3));
+        assert!(result.content.contains("λ+execute()"));
+        assert!(result.content.contains("§+Point"));
+    }
+
+    #[test]
+    fn test_read_map() {
+        let mut reader = FileReader::default();
+        let content = "use std::io;\npub fn main() {}";
+        let lines: Vec<&str> = content.lines().collect();
+        let result = reader.read_map("test.rs", content, &lines).unwrap();
+        
+        assert_eq!(result.mode, ReadMode::Map);
+        assert!(result.content.contains("deps: L1: use std::io;"));
+        assert!(result.content.contains("fn main()"));
+    }
+
+    #[test]
+    fn test_read_entropy_filtering() {
+        let reader = FileReader::default();
+        let content = "let x = 1;\n\n// a very low entropy string\naaaaaaaaaaaaa\npub fn run() {}";
+        let lines: Vec<&str> = content.lines().collect();
+        let result = reader.read_entropy(content, &lines);
+        
+        assert_eq!(result.mode, ReadMode::Entropy);
+        assert!(result.content.contains("run()"));
+        // 'aaaaaaaaaaaaa' should be filtered out by entropy analyzer
+        assert!(!result.content.contains("aaaaaaaaaaaaa"));
     }
 }
+

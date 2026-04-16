@@ -170,7 +170,7 @@ impl SessionCache {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
+
 
     #[test]
     fn test_store_and_hit() {
@@ -185,7 +185,7 @@ mod tests {
         assert!(old2.is_none());
         assert_eq!(entry2.read_count, 2);
         
-        let (entry3, hit3, old3) = cache.store("dummy.rs", "pub fn diff() {}".to_string());
+        let (_entry3, hit3, old3) = cache.store("dummy.rs", "pub fn diff() {}".to_string());
         assert!(!hit3);
         assert!(old3.is_some());
         assert_eq!(old3.unwrap(), "pub fn main() {}");

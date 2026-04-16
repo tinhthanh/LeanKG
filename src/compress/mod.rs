@@ -1,5 +1,7 @@
 pub mod cargo_test;
 pub mod entropy;
+pub mod litm;
+pub mod signatures;
 pub mod git_diff;
 pub mod modes;
 pub mod reader;
@@ -15,7 +17,7 @@ pub use reader::FileReader;
 pub use response::ResponseCompressor;
 pub use session_cache::SessionCache;
 pub use shell::ShellCompressor;
-pub use symbol_map::SymbolMap;
+
 
 pub const CHARS_PER_TOKEN: usize = 4;
 
