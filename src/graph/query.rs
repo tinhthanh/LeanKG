@@ -1151,7 +1151,7 @@ impl GraphEngine {
         element_qualified: &str,
     ) -> Result<Vec<DocLink>, Box<dyn std::error::Error>> {
         let normalized = normalize_path(element_qualified);
-        let query = r#"?[source_qualified, target_qualified, rel_type, metadata] := *relationships[source_qualified, target_qualified, rel_type, metadata], (source_qualified = $sq1 or source_qualified = $sq2), rel_type = "documented_by""#;
+        let query = r#"?[source_qualified, target_qualified, rel_type, confidence, metadata] := *relationships[source_qualified, target_qualified, rel_type, confidence, metadata], (source_qualified = $sq1 or source_qualified = $sq2), rel_type = "documented_by""#;
         let mut params = std::collections::BTreeMap::new();
         params.insert(
             "sq1".to_string(),
@@ -1170,7 +1170,8 @@ impl GraphEngine {
             .filter_map(|row| {
                 let doc_qualified = row[1].as_str().unwrap_or("").to_string();
                 let _rel_type = row[2].as_str().unwrap_or("");
-                let metadata_str = row.get(3).and_then(|v| v.as_str()).unwrap_or("{}");
+                let _confidence = row[3].as_f64().unwrap_or(1.0);
+                let metadata_str = row.get(4).and_then(|v| v.as_str()).unwrap_or("{}");
                 let metadata: serde_json::Value = serde_json::from_str(metadata_str).ok()?;
 
                 let doc_title = metadata
@@ -1939,7 +1940,7 @@ impl GraphEngine {
 
         let query = format!(
             r#"?[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata] :=
-               *relationships[qualified_name, target_qualified, "calls", _, _],
+               *relationships[source_qualified, target_qualified, "calls", _, _],
                regex_matches(target_qualified, ".*{function_name}.*"),
                *code_elements[qualified_name, element_type, name, file_path, line_start, line_end, language, parent_qualified, cluster_id, cluster_label, metadata]{file_filter}
                :limit 50"#,

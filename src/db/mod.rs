@@ -413,7 +413,7 @@ pub fn get_documented_by(
     db: &CozoDb,
     element_qualified: &str,
 ) -> Result<Vec<models::DocLink>, Box<dyn std::error::Error>> {
-    let query = r#"?[target_qualified, rel_type, metadata] := *relationships[source_qualified, target_qualified, rel_type, metadata], source_qualified = $sq, rel_type = "documented_by""#;
+    let query = r#"?[source_qualified, target_qualified, rel_type, confidence, metadata] := *relationships[source_qualified, target_qualified, rel_type, confidence, metadata], source_qualified = $sq, rel_type = "documented_by""#;
     let mut params = std::collections::BTreeMap::new();
     params.insert(
         "sq".to_string(),
@@ -426,9 +426,11 @@ pub fn get_documented_by(
     let doc_links: Vec<models::DocLink> = rows
         .iter()
         .filter_map(|row| {
-            let doc_qualified = row[0].as_str().unwrap_or("").to_string();
-            let _rel_type = row[1].as_str().unwrap_or("");
-            let metadata_str = row.get(2).and_then(|v| v.as_str()).unwrap_or("{}");
+            let _source = row[0].as_str().unwrap_or("");
+            let doc_qualified = row[1].as_str().unwrap_or("").to_string();
+            let _rel_type = row[2].as_str().unwrap_or("");
+            let _confidence = row[3].as_f64().unwrap_or(1.0);
+            let metadata_str = row.get(4).and_then(|v| v.as_str()).unwrap_or("{}");
             let metadata: serde_json::Value = serde_json::from_str(metadata_str).ok()?;
 
             let doc_title = metadata
