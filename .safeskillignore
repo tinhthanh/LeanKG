@@ -1,5 +1,6 @@
 # Exclude bundled/minified assets
 embed/
+src/embed/assets/
 dist/
 node_modules/
 
