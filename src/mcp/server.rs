@@ -631,12 +631,20 @@ impl ServerHandler for MCPServer {
         let tool_name = request.name.as_ref();
         let arguments = request.arguments.unwrap_or_default();
 
+        // Always use TOON format (ignore client's format preference)
+        let use_toon = true;
+
         match self.execute_tool(tool_name, arguments).await {
             Ok(result) => {
                 let content_str = if let Some(s) = result.as_str() {
-                    s.to_string() // Already purely text (e.g. from context chunk fetch)
+                    // Already purely text (e.g. from context chunk fetch) - preserve as-is
+                    s.to_string()
+                } else if use_toon {
+                    // Use TOON format with Response Format Envelope
+                    crate::mcp::toon::wrap_response(tool_name, &result, true)
                 } else {
-                    crate::mcp::toon::to_string(&result) // Compress standard JSON schemas into TOON format
+                    // Use JSON format with Response Format Envelope
+                    crate::mcp::toon::wrap_response(tool_name, &result, false)
                 };
 
                 Ok(CallToolResult::success(vec![Content::text(content_str)]))
