@@ -2374,24 +2374,25 @@ fn kill_old_processes() -> Result<(), Box<dyn std::error::Error>> {
 
     let patterns = ["leankg", "vite"];
     let max_retries = 3;
+    let current_pid = std::process::id();
 
     for pattern in patterns {
         let mut retries = 0;
         loop {
-            // Get all processes matching the pattern
+            // Get all processes matching the pattern, excluding self
             let matching_pids: Vec<u32> = {
                 let mut sys = System::new_all();
                 sys.refresh_all();
                 sys.processes()
                     .iter()
-                    .filter(|(_pid, process)| {
+                    .filter(|(pid, process)| {
                         let cmd: String = process
                             .cmd()
                             .iter()
                             .map(|s| s.to_string_lossy().into_owned())
                             .collect::<Vec<_>>()
                             .join(" ");
-                        cmd.contains(pattern)
+                        pid.as_u32() != current_pid && cmd.contains(pattern)
                     })
                     .map(|(pid, _)| pid.as_u32())
                     .collect()
@@ -2446,14 +2447,14 @@ fn kill_old_processes() -> Result<(), Box<dyn std::error::Error>> {
         let remaining: Vec<_> = sys
             .processes()
             .iter()
-            .filter(|(_pid, process)| {
+            .filter(|(pid, process)| {
                 let cmd: String = process
                     .cmd()
                     .iter()
                     .map(|s| s.to_string_lossy().into_owned())
                     .collect::<Vec<_>>()
                     .join(" ");
-                cmd.contains("leankg") || cmd.contains("vite")
+                pid.as_u32() != current_pid && (cmd.contains("leankg") || cmd.contains("vite"))
             })
             .collect();
 
