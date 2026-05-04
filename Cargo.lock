@@ -1388,6 +1388,7 @@ dependencies = [
  "futures-util",
  "glob",
  "ignore",
+ "libc",
  "notify",
  "once_cell",
  "parking_lot",

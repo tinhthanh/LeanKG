@@ -69,6 +69,9 @@ pub enum CLICommand {
         /// Enable auto-indexing with file watcher
         #[arg(long)]
         watch: bool,
+        /// Reuse existing server if already running (don't wait/start new)
+        #[arg(long)]
+        reuse: bool,
     },
     /// Calculate impact radius
     Impact {

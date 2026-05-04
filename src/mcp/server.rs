@@ -23,11 +23,22 @@ use rmcp::service::{serve_server, RoleServer};
 use rmcp::transport::stdio;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fs;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::{Duration, SystemTime};
 use tokio::sync::RwLock as TokioRwLock;
 use tower_http::cors::{Any, CorsLayer};
+
+/// Session information for coordination between multiple LeanKG instances
+#[derive(Debug, Serialize, Deserialize)]
+struct SessionInfo {
+    pid: u32,
+    port: u16,
+    started_at: String,
+    db_path: String,
+}
 
 pub struct MCPServer {
     auth_config: Arc<TokioRwLock<AuthConfig>>,
@@ -381,13 +392,12 @@ impl MCPServer {
         Ok(port)
     }
 
-    /// Find an available port starting from the given port, incrementing if taken
+    /// Find an available port starting from the given port, incrementing if taken.
+    /// Uses SO_REUSEADDR to handle TIME_WAIT state properly.
     fn find_available_port(start_port: u16) -> u16 {
         let mut port = start_port;
         while port < start_port + 100 {
-            // Try to bind to check if port is available
-            let addr = SocketAddr::from(([0, 0, 0, 0], port));
-            if std::net::TcpListener::bind(addr).is_ok() {
+            if Self::is_port_available(port) {
                 return port;
             }
             port += 1;
@@ -395,11 +405,222 @@ impl MCPServer {
         start_port
     }
 
+    /// Check if a port is available for binding using SO_REUSEADDR.
+    fn is_port_available(port: u16) -> bool {
+        let addr = SocketAddr::from(([0, 0, 0, 0], port));
+        if let Ok(listener) = std::net::TcpListener::bind(addr) {
+            // Set SO_REUSEPORT if available (macOS/BSD)
+            #[cfg(unix)]
+            {
+                use std::os::fd::AsRawFd;
+                let fd = listener.as_raw_fd();
+                unsafe {
+                    libc::setsockopt(
+                        fd,
+                        libc::SOL_SOCKET,
+                        libc::SO_REUSEADDR,
+                        &1 as *const i32 as *const libc::c_void,
+                        std::mem::size_of::<i32>() as libc::socklen_t,
+                    );
+                }
+            }
+            // Drop the listener so the port is released for actual use
+            drop(listener);
+            return true;
+        }
+        false
+    }
+
+    /// Path to session coordination directory
+    fn session_coord_dir(&self) -> PathBuf {
+        self.get_db_path().join(".leankg_sessions")
+    }
+
+    /// Path to our session file
+    fn session_file(&self, port: u16) -> PathBuf {
+        self.session_coord_dir()
+            .join(format!("session_{}.json", port))
+    }
+
+    /// Path to lock file for atomic port reservation
+    fn lock_file(&self, port: u16) -> PathBuf {
+        self.session_coord_dir().join(format!("port_{}.lock", port))
+    }
+
+    /// Attempt to acquire an exclusive lock on the port.
+    /// Returns Ok(None) if lock acquired, Ok(Some(pid)) if another process holds it.
+    fn try_acquire_port_lock(&self, port: u16) -> Result<Option<u32>, String> {
+        let lock_path = self.lock_file(port);
+        let coord_dir = self.session_coord_dir();
+
+        // Ensure directory exists
+        if let Err(e) = fs::create_dir_all(&coord_dir) {
+            return Err(format!("Failed to create session dir: {}", e));
+        }
+
+        // Check for existing lock file
+        if lock_path.exists() {
+            if let Ok(contents) = fs::read_to_string(&lock_path) {
+                if let Ok(pid) = contents.trim().parse::<u32>() {
+                    // Check if process is still alive
+                    if Self::is_process_alive(pid) {
+                        return Ok(Some(pid));
+                    }
+                }
+            }
+            // Stale lock - remove it
+            let _ = fs::remove_file(&lock_path);
+        }
+
+        // Try to create lock file
+        let pid = std::process::id();
+        match fs::write(&lock_path, pid.to_string()) {
+            Ok(_) => Ok(None),
+            Err(e) => Err(format!("Failed to create lock file: {}", e)),
+        }
+    }
+
+    /// Check if a process is alive by sending signal 0
+    fn is_process_alive(pid: u32) -> bool {
+        std::process::Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    }
+
+    /// Release the port lock if we own it
+    fn release_port_lock(&self, port: u16) {
+        let lock_path = self.lock_file(port);
+        if lock_path.exists() {
+            if let Ok(contents) = fs::read_to_string(&lock_path) {
+                if let Ok(pid) = contents.trim().parse::<u32>() {
+                    if pid == std::process::id() {
+                        let _ = fs::remove_file(&lock_path);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Check if a session is still alive by calling its health endpoint
+    async fn is_session_alive(&self, port: u16) -> bool {
+        let url = format!("http://127.0.0.1:{}/health", port);
+        match reqwest::Client::new()
+            .get(&url)
+            .timeout(Duration::from_secs(1))
+            .send()
+            .await
+        {
+            Ok(resp) => resp.status().is_success(),
+            Err(_) => false,
+        }
+    }
+
+    /// Register our session, returns (should_start_server, existing_port)
+    /// - If another session owns the port and is alive: (false, existing_port)
+    /// - If we're the owner or no one else: (true, port)
+    async fn register_session(
+        &self,
+        port: u16,
+    ) -> Result<(bool, Option<u16>), Box<dyn std::error::Error + Send + Sync>> {
+        let coord_dir = self.session_coord_dir();
+        fs::create_dir_all(&coord_dir)?;
+
+        // Check for existing sessions
+        let entries = fs::read_dir(&coord_dir)?;
+        for entry in entries.flatten() {
+            let filename = entry.file_name();
+            let filename_str = filename.to_string_lossy();
+
+            // Skip our own session file
+            let our_filename = format!("session_{}.json", port);
+            if filename_str == our_filename {
+                continue;
+            }
+
+            // Parse existing session
+            if let Ok(contents) = fs::read_to_string(entry.path()) {
+                if let Ok(session) = serde_json::from_str::<SessionInfo>(&contents) {
+                    // Check if that session's server is still alive
+                    if session.port == port && self.is_session_alive(port).await {
+                        tracing::info!(
+                            "Existing session {} is alive on port {}, reusing it",
+                            session.pid,
+                            port
+                        );
+                        return Ok((false, Some(port)));
+                    }
+                }
+            }
+        }
+
+        // Write our session info
+        let session = SessionInfo {
+            pid: std::process::id(),
+            port,
+            started_at: SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .map(|d| d.as_secs().to_string())
+                .unwrap_or_else(|_| "0".to_string()),
+            db_path: self.get_db_path().to_string_lossy().to_string(),
+        };
+        let json = serde_json::to_string_pretty(&session)?;
+        fs::write(self.session_file(port), json)?;
+
+        Ok((true, None))
+    }
+
+    /// Unregister our session on shutdown
+    async fn unregister_session(&self, port: u16) {
+        let session_path = self.session_file(port);
+        if session_path.exists() {
+            // Only delete if it's our PID (defensive)
+            if let Ok(contents) = fs::read_to_string(&session_path) {
+                if let Ok(session) = serde_json::from_str::<SessionInfo>(&contents) {
+                    if session.pid == std::process::id() {
+                        fs::remove_file(session_path).ok();
+                    }
+                }
+            }
+        }
+    }
+
     pub async fn serve_http(
         &self,
         port: u16,
         auth_token: Option<String>,
+        reuse: bool,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        // Session coordination: check if another instance is already running
+        let (should_start, existing_port) = self.register_session(port).await?;
+        if !should_start && !reuse {
+            tracing::info!(
+                "Session on port {} already running, waiting for it to be available...",
+                existing_port.unwrap_or(port)
+            );
+            // Wait up to 60 seconds for the port to become available
+            for i in 0..60 {
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                if !self.is_session_alive(port).await {
+                    tracing::info!("Previous session on port {} has stopped", port);
+                    break;
+                }
+                if i % 10 == 9 {
+                    tracing::info!("Still waiting for port {}...", port);
+                }
+            }
+        } else if !should_start && reuse {
+            // In reuse mode, check if existing server is alive and return success
+            if self.is_session_alive(port).await {
+                tracing::info!(
+                    "Existing MCP HTTP server is running on port {}, reusing it (exit 0)",
+                    port
+                );
+                std::process::exit(0);
+            }
+        }
+
         if let Err(e) = self.auto_init_if_needed().await {
             tracing::warn!(
                 "Auto-init skipped: {}. Server will operate in uninitialized state.",
@@ -443,7 +664,66 @@ impl MCPServer {
             .with_state(server);
 
         let addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
-        let listener = tokio::net::TcpListener::bind(addr).await?;
+
+        // Acquire port lock before binding to prevent race conditions
+        match self.try_acquire_port_lock(port) {
+            Ok(Some(other_pid)) => {
+                if reuse {
+                    tracing::info!(
+                        "Port {} locked by PID {}, server already running (exit 0)",
+                        port,
+                        other_pid
+                    );
+                    return Ok(());
+                } else {
+                    tracing::info!(
+                        "Port {} locked by PID {}, waiting for release...",
+                        port,
+                        other_pid
+                    );
+                    // Wait for lock to be released
+                    for i in 0..60 {
+                        tokio::time::sleep(Duration::from_secs(1)).await;
+                        if self
+                            .try_acquire_port_lock(port)
+                            .map(|r| r.is_none())
+                            .unwrap_or(false)
+                        {
+                            tracing::info!("Port {} released, acquiring lock", port);
+                            break;
+                        }
+                        if i % 10 == 9 {
+                            tracing::info!("Still waiting for port {}...", port);
+                        }
+                    }
+                }
+            }
+            Ok(None) => {
+                tracing::debug!("Acquired lock for port {}", port);
+            }
+            Err(e) => {
+                tracing::warn!("Failed to acquire port lock: {}, proceeding anyway", e);
+            }
+        }
+
+        // Bind with SO_REUSEADDR to handle TIME_WAIT and prevent "Address already in use"
+        let std_listener = std::net::TcpListener::bind(addr)?;
+        #[cfg(unix)]
+        {
+            use std::os::fd::AsRawFd;
+            let fd = std_listener.as_raw_fd();
+            unsafe {
+                libc::setsockopt(
+                    fd,
+                    libc::SOL_SOCKET,
+                    libc::SO_REUSEADDR,
+                    &1 as *const i32 as *const libc::c_void,
+                    std::mem::size_of::<i32>() as libc::socklen_t,
+                );
+            }
+        }
+        std_listener.set_nonblocking(true)?;
+        let listener = tokio::net::TcpListener::from_std(std_listener)?;
         tracing::info!("MCP HTTP server listening on http://{}", addr);
 
         axum::serve(listener, app).await?;
@@ -865,8 +1145,24 @@ impl MCPServer {
                 .map(String::from)
         };
 
+        let project_db_path = if let Some(ref fp) = file_path {
+            if let Some(leankg_path) = Self::find_leankg_for_path(fp.as_str()) {
+                tracing::debug!(
+                    "Routing query for '{}' to database at {}",
+                    fp,
+                    leankg_path.display()
+                );
+                leankg_path
+            } else {
+                tracing::debug!("No .leankg found for '{}', using default db_path", fp);
+                self.get_db_path()
+            }
+        } else {
+            Self::find_leankg_for_path(".").unwrap_or_else(|| self.get_db_path())
+        };
+
         let graph_engine = self.get_graph_engine_for_path(file_path.as_ref())?;
-        let handler = ToolHandler::new(graph_engine, self.get_db_path());
+        let handler = ToolHandler::new(graph_engine, project_db_path);
         let args_value = serde_json::Value::Object(arguments);
         let result = handler.execute_tool(tool_name, &args_value).await;
 
@@ -961,7 +1257,8 @@ struct HttpMcpServer {
 #[derive(Debug, Serialize, Deserialize)]
 struct JsonRpcRequest {
     jsonrpc: String,
-    id: serde_json::Value,
+    #[serde(default)]
+    id: Option<serde_json::Value>,
     method: String,
     params: Option<serde_json::Value>,
 }
@@ -971,7 +1268,9 @@ struct JsonRpcRequest {
 struct JsonRpcResponse {
     jsonrpc: String,
     id: serde_json::Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
     result: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<JsonRpcError>,
 }
 
@@ -1049,20 +1348,32 @@ async fn handle_mcp_request(
         }
     };
 
+    // Check if this is a notification (no id) - notifications must not receive a response
+    let is_notification = request.id.is_none();
+    if is_notification {
+        // Process the notification but don't send a response
+        let _ = process_jsonrpc_request(&server.mcp_server, &request).await;
+        return Response::builder()
+            .status(StatusCode::NO_CONTENT)
+            .body(Body::empty())
+            .unwrap();
+    }
+
     // Process the request
     let result = process_jsonrpc_request(&server.mcp_server, &request).await;
 
     // Build response
+    // unwrap is safe because if id was None we already returned NO_CONTENT above
     let response = match result {
         Ok(result) => JsonRpcResponse {
             jsonrpc: "2.0".to_string(),
-            id: request.id,
+            id: request.id.clone().unwrap(),
             result: Some(result),
             error: None,
         },
         Err(e) => JsonRpcResponse {
             jsonrpc: "2.0".to_string(),
-            id: request.id,
+            id: request.id.clone().unwrap(),
             result: None,
             error: Some(JsonRpcError {
                 code: json_rpc_code::INTERNAL_ERROR,

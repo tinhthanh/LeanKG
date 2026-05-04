@@ -162,7 +162,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 eprintln!("MCP stdio server error: {}", e);
             }
         }
-        cli::CLICommand::McpHttp { port, auth, watch } => {
+        cli::CLICommand::McpHttp {
+            port,
+            auth,
+            watch,
+            reuse,
+        } => {
             let project_path = find_project_root()?;
             let db_path = project_path.join(".leankg");
             let port = port.unwrap_or_else(|| {
@@ -191,9 +196,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             } else {
                 println!("🔓 Authentication: disabled (not recommended for production)");
             }
+            if reuse {
+                println!("🔄 Reuse mode: will connect to existing server if available");
+            }
             println!();
 
-            if let Err(e) = mcp_server.serve_http(port, auth_token).await {
+            if let Err(e) = mcp_server.serve_http(port, auth_token, reuse).await {
                 eprintln!("MCP HTTP server error: {}", e);
             }
         }
